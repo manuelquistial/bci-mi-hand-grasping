@@ -11,6 +11,7 @@ from dataset_loaders import (
     BaseDatasetLoader,
     create_loader,
     get_loader_class_by_id,
+    list_datasets,
     list_subjects_for_dataset,
     resolve_data_root,
 )
@@ -104,6 +105,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="List available subjects and runs for the dataset, then exit.",
     )
     parser.add_argument(
+        "--list-datasets",
+        action="store_true",
+        help="Print the datasets this simulator can play as JSON, then exit.",
+    )
+    parser.add_argument(
         "--events",
         type=str,
         default=None,
@@ -184,6 +190,9 @@ def run(
     """
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    if args.list_datasets:
+        print(json.dumps(list_datasets()))
+        return 0
 
     # Prefer a dataset unless the user explicitly passed a file or pick-file
     dataset_id = args.dataset

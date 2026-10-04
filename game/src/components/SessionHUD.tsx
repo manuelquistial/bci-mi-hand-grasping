@@ -37,7 +37,7 @@ export function SessionHUD() {
       </div>
       <div className={styles.row}>
         <span className={styles.k}>Phase</span>
-        <span>{phase ?? "—"}</span>
+        <span>{phase === "inter_trial_interval" ? "rest" : (phase ?? "—")}</span>
       </div>
       <div className={styles.row}>
         <span className={styles.k}>Trial</span>

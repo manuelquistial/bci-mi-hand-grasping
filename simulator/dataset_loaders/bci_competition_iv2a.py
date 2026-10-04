@@ -30,6 +30,7 @@ class BCICompetitionIV2aLoader(BaseDatasetLoader):
     """
 
     id = "bci_iv2a"
+    label = "BCI Competition IV 2a"
 
     def __init__(
         self,

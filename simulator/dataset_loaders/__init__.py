@@ -22,6 +22,11 @@ LOADERS: list[Type[BaseDatasetLoader]] = [
 DATASET_IDS = tuple(L.id for L in LOADERS)
 
 
+def list_datasets() -> list[dict[str, str]]:
+    """Datasets the simulator can play, in registry order."""
+    return [{"id": loader.id, "label": loader.label} for loader in LOADERS]
+
+
 def get_loader_class_by_id(loader_id: str) -> Type[BaseDatasetLoader] | None:
     """Return the loader class for a dataset id, or None."""
     return next((L for L in LOADERS if L.id == loader_id), None)
@@ -107,6 +112,7 @@ __all__ = [
     "GenericCSVLoader",
     "LOADERS",
     "DATASET_IDS",
+    "list_datasets",
     "create_loader",
     "get_loader_class_by_id",
     "get_loader_for_path",

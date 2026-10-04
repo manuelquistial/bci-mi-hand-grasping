@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 from pipeline.cyton import validate_cyton_stream
 from pipeline.models import StreamSummary
 from pipeline.recorder import SessionRecorder, open_session_writer
-from pipeline.session import load_recording
+from pipeline.session import SESSION_NAME, list_recordings, load_recording
 
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 ProcessStarter = Callable[[list[str]], "subprocess.Popen[Any]"]
@@ -35,6 +35,43 @@ def default_simulator_project() -> Path:
     if env:
         return Path(env)
     return Path(__file__).resolve().parents[3] / "simulator"
+
+
+# One simulator process publishes one stream. The name is not a user setting.
+SIMULATOR_LSL_NAME = "OpenBCI_EEG"
+DatasetLister = Callable[[], list[dict[str, str]]]
+
+
+def query_simulator_datasets(simulator_project: Path) -> list[dict[str, str]]:
+    """Ask the simulator which datasets it can play."""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(simulator_project),
+            "simopenbci",
+            "--list-datasets",
+        ],
+        cwd=simulator_project,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "simulator exited").strip()
+        last = detail.splitlines()[-1] if detail else "Could not list datasets"
+        raise RuntimeError(last)
+    data = json.loads(completed.stdout or "[]")
+    if not isinstance(data, list):
+        raise RuntimeError("dataset list must be a JSON array")
+    datasets: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        datasets.append({"id": str(item["id"]), "label": str(item.get("label") or item["id"])})
+    return datasets
 
 
 def lsl_clock() -> float:
@@ -132,6 +169,7 @@ class PipelineService:
         clock: Callable[[], float] | None = None,
         simulator_project: Path | None = None,
         process_starter: ProcessStarter | None = None,
+        dataset_lister: DatasetLister | None = None,
     ) -> None:
         self.recordings_root = Path(recordings_root)
         self.recordings_root.mkdir(parents=True, exist_ok=True)
@@ -139,6 +177,8 @@ class PipelineService:
         self._clock = clock or lsl_clock
         self._simulator_project = Path(simulator_project or default_simulator_project())
         self._process_starter = process_starter or start_simulator_process
+        self._dataset_lister = dataset_lister
+        self._datasets: list[dict[str, str]] | None = None
         self._lock = threading.Lock()
         self._starting = False
         self._recorder: SessionRecorder | None = None
@@ -149,6 +189,46 @@ class PipelineService:
         self._online_samples = 0
         self._online_error: str | None = None
         self._online_source: str | None = None
+
+    def list_datasets(self) -> dict[str, Any]:
+        if self._datasets is None:
+            lister = self._dataset_lister or (
+                lambda: query_simulator_datasets(self._simulator_project)
+            )
+            self._datasets = lister()
+        datasets: list[dict[str, str]] = [
+            {
+                "id": item["id"],
+                "label": item["label"],
+                "dataset": item["id"],
+                "sessionDir": "",
+            }
+            for item in self._datasets
+            if item["id"] != "recorded_session"
+        ]
+        datasets.extend(self._recording_options())
+        return {"datasets": datasets}
+
+    def _recording_options(self) -> list[dict[str, str]]:
+        options: list[dict[str, str]] = []
+        for path in list_recordings(self.recordings_root):
+            try:
+                meta = json.loads((path / SESSION_NAME).read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            session_id = str(meta.get("session_id") or path.name)
+            written = str(meta.get("written_at") or "")
+            when = written[:16].replace("T", " ")
+            label = f"{when} · {session_id}" if when else session_id
+            options.append(
+                {
+                    "id": f"recording:{session_id}",
+                    "label": label,
+                    "dataset": "recorded_session",
+                    "sessionDir": str(path),
+                }
+            )
+        return options
 
     def start_recording(
         self,
@@ -417,6 +497,12 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
                 return
             if path == "/v1/status":
                 self._send(200, service.status())
+                return
+            if path == "/v1/datasets":
+                try:
+                    self._send(200, service.list_datasets())
+                except (RuntimeError, OSError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+                    self._send(400, {"error": str(exc)})
                 return
             self._send(404, {"error": "not found"})
 

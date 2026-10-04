@@ -35,6 +35,7 @@ class RecordedSessionLoader(BaseDatasetLoader):
     """Pipeline session folder: signal.f32 + time.f64 + markers.jsonl + session.json."""
 
     id = "recorded_session"
+    label = "Recorded session"
 
     def __init__(
         self,

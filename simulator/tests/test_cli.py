@@ -1,8 +1,21 @@
 """CLI integration tests (no pylsl required via sink_factory)."""
+import json
 from pathlib import Path
 
 from simopenbci.cli import run
 from simopenbci.sinks.recording import RecordingSink
+
+
+def test_list_datasets(capsys) -> None:
+    code = run(["--list-datasets"])
+    assert code == 0
+    datasets = json.loads(capsys.readouterr().out)
+    assert [item["id"] for item in datasets] == [
+        "recorded_session",
+        "bci_iv2a",
+        "physionet_eegbci",
+        "generic_csv",
+    ]
 
 
 def test_list_subjects(fixtures_dir: Path):

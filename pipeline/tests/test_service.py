@@ -129,6 +129,44 @@ def test_record_start_stop_and_marker_over_http(tmp_path: Path) -> None:
         thread.join(timeout=2)
 
 
+def test_list_datasets_uses_the_injected_catalog(tmp_path: Path) -> None:
+    service = PipelineService(
+        tmp_path,
+        dataset_lister=lambda: [{"id": "bci_iv2a", "label": "BCI Competition IV 2a"}],
+    )
+    listed = service.list_datasets()
+    assert listed["datasets"] == [
+        {
+            "id": "bci_iv2a",
+            "label": "BCI Competition IV 2a",
+            "dataset": "bci_iv2a",
+            "sessionDir": "",
+        }
+    ]
+
+
+def test_list_datasets_includes_offline_recordings(tmp_path: Path) -> None:
+    session = tmp_path / "lab1"
+    session.mkdir()
+    (session / "session.json").write_text(
+        '{"session_id": "lab1", "written_at": "2026-10-04T23:40:00+00:00"}',
+        encoding="utf-8",
+    )
+    service = PipelineService(
+        tmp_path,
+        dataset_lister=lambda: [
+            {"id": "recorded_session", "label": "Recorded session"},
+            {"id": "bci_iv2a", "label": "BCI Competition IV 2a"},
+        ],
+    )
+    listed = service.list_datasets()["datasets"]
+    assert [item["id"] for item in listed] == ["bci_iv2a", "recording:lab1"]
+    recording = listed[1]
+    assert recording["dataset"] == "recorded_session"
+    assert recording["sessionDir"] == str(session)
+    assert "lab1" in recording["label"]
+
+
 def test_online_start_launches_simulator_command(tmp_path: Path) -> None:
     seen: list[list[str]] = []
 

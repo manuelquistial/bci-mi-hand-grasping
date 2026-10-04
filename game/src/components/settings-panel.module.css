@@ -34,6 +34,12 @@
   margin-bottom: 0.5rem;
 }
 
+.note {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--danger, #e7b2a8);
+}
+
 .row input,
 .row select {
   background: var(--bg, #1c1917);

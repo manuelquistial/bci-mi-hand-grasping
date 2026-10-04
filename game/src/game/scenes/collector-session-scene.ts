@@ -142,10 +142,15 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     if (action.type === "timeout") {
       const scored = scoreForCollection(false, true);
       this.applyOutcome(trial, scored.outcome, scored.delta);
-      this.enterPhase("feedback", now, trial);
+      this.enterPhase(this.phaseAfterControl(), now, trial);
       return;
     }
-    this.enterPhase(action.phase, now, trial);
+    const phase = action.phase === "feedback" ? this.phaseAfterControl() : action.phase;
+    this.enterPhase(phase, now, trial);
+  }
+
+  private phaseAfterControl(): TrialPhase {
+    return this.sessionMode === "offline" ? "inter_trial_interval" : "feedback";
   }
 
   private enterPhase(phase: TrialPhase, now: number, trial: TrialDefinition): void {

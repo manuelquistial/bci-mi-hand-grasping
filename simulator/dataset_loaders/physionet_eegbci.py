@@ -21,6 +21,7 @@ class PhysioNetEEGBCILoader(BaseDatasetLoader):
     """
 
     id = "physionet_eegbci"
+    label = "PhysioNet EEG Motor Imagery"
 
     def __init__(
         self,

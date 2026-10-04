@@ -47,7 +47,6 @@ export type SessionSettings = {
   };
   pipeline: {
     baseUrl: string;
-    lslName: string;
     onlineSource: "simulator" | "cyton";
     dataset: string;
     sessionDir: string;
@@ -91,7 +90,6 @@ export const defaultSessionSettings = (): SessionSettings => ({
   },
   pipeline: {
     baseUrl: "http://127.0.0.1:8765",
-    lslName: "OpenBCI_EEG",
     onlineSource: "simulator",
     dataset: "bci_iv2a",
     sessionDir: "",

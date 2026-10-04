@@ -88,6 +88,7 @@ El simulador no escribe esa carpeta. La lee con `--dataset recorded_session --fi
 | POST | `/v1/record/start` | Empieza a grabar el inlet EEG (`session_id`) |
 | POST | `/v1/record/marker` | Anota un trial (`kind`, `code`, `label`) |
 | POST | `/v1/record/stop` | Cierra la carpeta |
+| GET | `/v1/datasets` | Datasets que el simulador puede reproducir |
 | POST | `/v1/online/start` | Arranca el simulador o escucha la Cyton |
 | POST | `/v1/online/stop` | Detiene la corrida online |
 | GET | `/v1/status` | Muestras grabadas o vistas |

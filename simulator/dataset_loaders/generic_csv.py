@@ -17,6 +17,7 @@ class GenericCSVLoader(BaseDatasetLoader):
     """
 
     id = "generic_csv"
+    label = "Generic CSV"
 
     def __init__(
         self,

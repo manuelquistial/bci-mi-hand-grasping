@@ -37,6 +37,7 @@ class BaseDatasetLoader(ABC):
 
     # Identificador corto para registro y detección (ej: "bci_iv2a", "generic_csv")
     id: str = "base"
+    label: str = "Dataset"
 
     @property
     @abstractmethod

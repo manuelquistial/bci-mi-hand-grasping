@@ -50,12 +50,46 @@ export function pipelineMarker(
   return postJson(settings.baseUrl, "/v1/record/marker", marker);
 }
 
+export type SimulatorDataset = {
+  id: string;
+  label: string;
+  dataset: string;
+  sessionDir: string;
+};
+
+export async function pipelineListDatasets(baseUrl: string): Promise<SimulatorDataset[]> {
+  const url = `${baseUrl.replace(/\/$/, "")}/v1/datasets`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new Error(
+      `Pipeline is not reachable at ${baseUrl}. Start it with \`uv run pipeline serve\` inside pipeline/.`,
+    );
+  }
+  const text = await response.text();
+  const payload = text
+    ? (JSON.parse(text) as {
+        error?: string;
+        datasets?: Array<Partial<SimulatorDataset> & { id: string; label: string }>;
+      })
+    : {};
+  if (!response.ok) {
+    throw new Error(payload.error || `Pipeline responded ${response.status}`);
+  }
+  return (payload.datasets ?? []).map((item) => ({
+    id: item.id,
+    label: item.label,
+    dataset: item.dataset || item.id,
+    sessionDir: item.sessionDir ?? "",
+  }));
+}
+
 export function pipelineOnlineStart(
   settings: PipelineSettings,
 ): Promise<Record<string, unknown>> {
   return postJson(settings.baseUrl, "/v1/online/start", {
     source: settings.onlineSource,
-    lsl_name: settings.onlineSource === "cyton" ? "" : settings.lslName,
     dataset: settings.dataset,
     session_dir: settings.sessionDir,
   });

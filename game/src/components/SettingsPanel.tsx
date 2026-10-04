@@ -1,16 +1,59 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
+import {
+  pipelineListDatasets,
+  type SimulatorDataset,
+} from "@/lib/pipeline/client";
 import { useSettingsStore } from "@/state/settings-store";
 
 import styles from "./settings-panel.module.css";
 
 export type SetupScreen = "offline" | "simulator" | "real";
 
+function selectedDatasetId(
+  datasets: SimulatorDataset[],
+  pipeline: { dataset: string; sessionDir: string },
+): string {
+  const match = datasets.find((item) =>
+    item.dataset === "recorded_session"
+      ? pipeline.dataset === "recorded_session" && item.sessionDir === pipeline.sessionDir
+      : item.id === pipeline.dataset,
+  );
+  return match?.id ?? pipeline.dataset;
+}
+
 export function SettingsPanel({ screen }: { screen: SetupScreen }) {
   const settings = useSettingsStore((s) => s.settings);
   const setNested = useSettingsStore((s) => s.setNested);
   const title =
     screen === "offline" ? "Offline" : screen === "simulator" ? "Simulator" : "Real";
+  const [datasets, setDatasets] = useState<SimulatorDataset[]>([]);
+  const [datasetError, setDatasetError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (screen !== "simulator") return;
+    let cancelled = false;
+    const baseUrl = useSettingsStore.getState().settings.pipeline.baseUrl;
+    pipelineListDatasets(baseUrl)
+      .then((listed) => {
+        if (cancelled) return;
+        setDatasets(listed);
+        setDatasetError(null);
+        const current = useSettingsStore.getState().settings.pipeline.dataset;
+        if (listed.length > 0 && !listed.some((item) => item.id === current)) {
+          setNested("pipeline", { dataset: listed[0].id });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setDatasetError(error instanceof Error ? error.message : "Could not load datasets");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [screen, setNested]);
 
   return (
     <section className={styles.panel} aria-labelledby="settings-heading">
@@ -31,36 +74,36 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
         {screen === "simulator" ? (
           <>
             <label className={styles.row}>
-              LSL name
-              <input
-                type="text"
-                value={settings.pipeline.lslName}
-                onChange={(e) => setNested("pipeline", { lslName: e.target.value })}
-              />
-            </label>
-            <label className={styles.row}>
               Dataset
-              <input
-                type="text"
-                value={settings.pipeline.dataset}
-                onChange={(e) => setNested("pipeline", { dataset: e.target.value })}
-              />
+              <select
+                value={selectedDatasetId(datasets, settings.pipeline)}
+                onChange={(e) => {
+                  const item = datasets.find((entry) => entry.id === e.target.value);
+                  if (!item) return;
+                  setNested("pipeline", {
+                    dataset: item.dataset,
+                    sessionDir: item.sessionDir,
+                  });
+                }}
+              >
+                {datasets.length === 0 ? (
+                  <option value={settings.pipeline.dataset}>{settings.pipeline.dataset}</option>
+                ) : (
+                  datasets.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))
+                )}
+              </select>
             </label>
-            <label className={styles.row}>
-              Recorded session dir
-              <input
-                type="text"
-                value={settings.pipeline.sessionDir}
-                placeholder="recordings/<session id>"
-                onChange={(e) =>
-                  setNested("pipeline", { sessionDir: e.target.value })
-                }
-              />
-            </label>
+            {datasetError ? <p className={styles.note}>{datasetError}</p> : null}
           </>
         ) : null}
       </fieldset>
 
+      {screen === "simulator" ? null : (
+      <>
       <fieldset className={styles.fieldset}>
         <legend>Timings (ms)</legend>
         <label className={styles.row}>
@@ -97,20 +140,22 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
             }
           />
         </label>
+        {screen === "real" ? (
+          <label className={styles.row}>
+            Feedback
+            <input
+              type="number"
+              value={settings.offline.feedbackDurationMs}
+              onChange={(e) =>
+                setNested("offline", {
+                  feedbackDurationMs: Number(e.target.value),
+                })
+              }
+            />
+          </label>
+        ) : null}
         <label className={styles.row}>
-          Feedback
-          <input
-            type="number"
-            value={settings.offline.feedbackDurationMs}
-            onChange={(e) =>
-              setNested("offline", {
-                feedbackDurationMs: Number(e.target.value),
-              })
-            }
-          />
-        </label>
-        <label className={styles.row}>
-          ITI
+          Rest
           <input
             type="number"
             value={settings.offline.itiDurationMs}
@@ -190,6 +235,8 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
           </select>
         </label>
       </fieldset>
+      </>
+      )}
     </section>
   );
 }
