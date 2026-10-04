@@ -1,0 +1,37 @@
+.card {
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 1rem;
+  max-width: 360px;
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: #cdd6f4;
+}
+
+.dl {
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.dl dt {
+  color: #6c7086;
+  margin: 0;
+}
+
+.dl dd {
+  margin: 0;
+  color: #bac2de;
+  font-weight: 500;
+}

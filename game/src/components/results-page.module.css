@@ -1,0 +1,35 @@
+.page {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem;
+}
+
+.header {
+  margin-bottom: 1.5rem;
+}
+
+.back {
+  color: #89b4fa;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.back:hover {
+  text-decoration: underline;
+}
+
+.title {
+  margin: 0.5rem 0;
+  color: #cdd6f4;
+}
+
+.lead {
+  margin: 0;
+  color: #a6adc8;
+  font-size: 0.95rem;
+}
+
+.error {
+  color: #f38ba8;
+  margin-bottom: 1rem;
+}

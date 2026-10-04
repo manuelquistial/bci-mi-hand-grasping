@@ -1,0 +1,60 @@
+.panel {
+  background: #181825;
+  border: 1px solid #313244;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.title {
+  margin: 0 0 0.75rem;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #cdd6f4;
+}
+
+.fieldset {
+  border: 1px solid #313244;
+  border-radius: 6px;
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.fieldset legend {
+  padding: 0 0.25rem;
+  font-size: 0.8rem;
+  color: #a6adc8;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: #bac2de;
+  margin-bottom: 0.5rem;
+}
+
+.row input,
+.row select {
+  background: #11111b;
+  border: 1px solid #45475a;
+  color: #cdd6f4;
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+}
+
+.rowCheck {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #bac2de;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+}
+
+.rowCheck input {
+  width: auto;
+  cursor: pointer;
+}

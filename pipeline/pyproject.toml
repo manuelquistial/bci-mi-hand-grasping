@@ -1,0 +1,31 @@
+[project]
+name = "pipeline"
+version = "0.1.0"
+description = "EEG/BCI pipeline — discover and read Lab Streaming Layer (LSL) streams"
+readme = "README.md"
+authors = [
+    { name = "Manuel Quistial", email = "manuel.quistialj@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.4.6",
+    "pylsl>=1.16.0",
+    "pyqt5>=5.15.11",
+    "pyqtgraph>=0.14.0",
+]
+
+[project.scripts]
+pipeline = "pipeline.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,29 @@
+.wrap {
+  overflow-x: auto;
+  border: 1px solid #313244;
+  border-radius: 8px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  color: #cdd6f4;
+}
+
+.table th,
+.table td {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #313244;
+}
+
+.table th {
+  background: #181825;
+  color: #a6adc8;
+  font-weight: 500;
+}
+
+.empty {
+  color: #a6adc8;
+}

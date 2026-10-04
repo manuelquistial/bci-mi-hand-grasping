@@ -1,0 +1,40 @@
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  min-height: calc(100vh - 48px);
+  gap: 1rem;
+  padding: 1rem;
+  max-width: 1760px;
+  margin: 0 auto;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.canvasWrap {
+  background: #88c943;
+  border-radius: 8px;
+  border: 1px solid #313244;
+  overflow: hidden;
+}
+
+.error {
+  color: #f38ba8;
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+}

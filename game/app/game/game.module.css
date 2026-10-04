@@ -1,0 +1,24 @@
+.wrap {
+  min-height: 100vh;
+  background: #11111b;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #313244;
+}
+
+.back,
+.sub {
+  color: #89b4fa;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.back:hover,
+.sub:hover {
+  text-decoration: underline;
+}

@@ -1,0 +1,15 @@
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.link {
+  font-size: 0.8rem;
+  color: #89b4fa;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}

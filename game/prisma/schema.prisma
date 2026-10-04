@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  mode         String
+  startedAt    DateTime
+  endedAt      DateTime?
+  totalScore   Int      @default(0)
+  successRate  Float?
+  settingsJson String
+  createdAt    DateTime @default(now())
+
+  trials            Trial[]
+  telemetrySamples  TelemetrySample[]
+  events            SessionEvent[]
+
+  @@index([createdAt])
+}
+
+model Trial {
+  id                  String    @id @default(cuid())
+  sessionId           String
+  session             Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  trialIndex          Int
+  blockIndex          Int
+  label               String
+  targetSide          String
+  phaseTimestampsJson String    @default("{}")
+  outcome             String?
+  score               Int         @default(0)
+  startedAt           DateTime?
+  endedAt             DateTime?
+
+  telemetrySamples TelemetrySample[]
+
+  @@unique([sessionId, trialIndex])
+  @@index([sessionId])
+}
+
+model TelemetrySample {
+  id             String   @id @default(cuid())
+  sessionId      String
+  session        Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  trialId        String?
+  trial          Trial?   @relation(fields: [trialId], references: [id], onDelete: SetNull)
+  timestamp      Float
+  leftValue      Float
+  rightValue     Float
+  controlSignal  Float
+  smoothedSignal Float
+  velocityX      Float
+  avatarX        Float
+  phase          String
+
+  @@index([sessionId, timestamp])
+  @@index([trialId])
+}
+
+model SessionEvent {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  type        String
+  payloadJson String?
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId])
+}
