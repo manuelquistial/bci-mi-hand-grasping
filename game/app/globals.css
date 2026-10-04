@@ -1,7 +1,16 @@
 :root {
   color-scheme: dark;
-  background: #11111b;
-  color: #cdd6f4;
+  --bg: #1c1917;
+  --surface: #292524;
+  --line: #44403c;
+  --ink: #e7e5e4;
+  --muted: #a8a29e;
+  --accent: #b7c4a8;
+  --accent-ink: #1c1917;
+  --danger: #e7b2a8;
+  background: var(--bg);
+  color: var(--ink);
+  accent-color: var(--accent);
 }
 
 * {
@@ -13,7 +22,14 @@ body {
   max-width: 100vw;
   margin: 0;
   min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 a {

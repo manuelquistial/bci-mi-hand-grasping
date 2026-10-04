@@ -1,6 +1,6 @@
 .card {
-  background: #181825;
-  border: 1px solid #313244;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 1rem;
   max-width: 360px;
@@ -9,7 +9,7 @@
 .title {
   margin: 0 0 0.75rem;
   font-size: 1rem;
-  color: #cdd6f4;
+  color: var(--ink);
 }
 
 .dl {
@@ -26,12 +26,12 @@
 }
 
 .dl dt {
-  color: #6c7086;
+  color: var(--muted);
   margin: 0;
 }
 
 .dl dd {
   margin: 0;
-  color: #bac2de;
+  color: var(--ink);
   font-weight: 500;
 }

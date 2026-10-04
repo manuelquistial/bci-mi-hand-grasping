@@ -1,4 +1,5 @@
 import type { GameBridge } from "@/game/bridge/game-bridge";
+import { GAME_HEIGHT, GAME_WIDTH } from "@/game/config/constants";
 import { BootScene } from "@/game/scenes/BootScene";
 import { OfflineScene } from "@/game/scenes/OfflineScene";
 import { OnlineScene } from "@/game/scenes/OnlineScene";
@@ -6,15 +7,13 @@ import { OnlineScene } from "@/game/scenes/OnlineScene";
 export async function createCollectorGame(
   parent: HTMLElement,
   bridge: GameBridge,
-  width: number,
-  height: number,
 ): Promise<import("phaser").Game> {
   const Phaser = (await import("phaser")).default;
   const config: import("phaser").Types.Core.GameConfig = {
     type: Phaser.AUTO,
     parent,
-    width,
-    height,
+    width: GAME_WIDTH,
+    height: GAME_HEIGHT,
     backgroundColor: "#88c943",
     scene: [BootScene, OfflineScene, OnlineScene],
     render: {

@@ -1,4 +1,4 @@
 .page {
   min-height: 100vh;
-  background: radial-gradient(ellipse at top, #1e1e2e 0%, #11111b 55%);
+  background: var(--bg);
 }

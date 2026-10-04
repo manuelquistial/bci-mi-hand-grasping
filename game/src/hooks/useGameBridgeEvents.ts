@@ -7,9 +7,12 @@ import {
   apiPostTelemetry,
   apiPostTrial,
 } from "@/lib/api/client";
+import { pipelineMarker, trialMarker } from "@/lib/pipeline/client";
 import type { GameBridge } from "@/game/bridge/game-bridge";
 import { useHudStore } from "@/state/hud-store";
 import { usePersistenceStore } from "@/state/persistence-store";
+import { useSettingsStore } from "@/state/settings-store";
+import type { SessionMode } from "@/types/domain";
 
 export function useGameBridgeEvents(
   bridge: GameBridge,
@@ -18,8 +21,10 @@ export function useGameBridgeEvents(
   const setLastError = usePersistenceStore((s) => s.setLastError);
 
   useEffect(() => {
+    const modeRef: { current: SessionMode | null } = { current: null };
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === "SESSION_STARTED") {
+        modeRef.current = ev.mode;
         sessionIdRef.current = ev.sessionId;
         useHudStore.setState({
           sessionId: ev.sessionId,
@@ -29,15 +34,10 @@ export function useGameBridgeEvents(
         });
         setLastError(null);
       }
-      if (ev.type === "SESSION_PAUSED") {
-        useHudStore.setState({ sessionStatus: "paused" });
-      }
-      if (ev.type === "SESSION_RESUMED") {
-        useHudStore.setState({ sessionStatus: "running" });
-      }
       if (ev.type === "SESSION_STOPPED") {
         useHudStore.setState({ sessionStatus: "idle", bciStatusLine: null });
         sessionIdRef.current = null;
+        modeRef.current = null;
       }
       if (ev.type === "PHASE_CHANGED") {
         useHudStore.setState({
@@ -52,6 +52,13 @@ export function useGameBridgeEvents(
           trialIndex: ev.trialIndex,
           blockIndex: ev.blockIndex,
         });
+        if (modeRef.current === "offline") {
+          const pipeline = useSettingsStore.getState().settings.pipeline;
+          void pipelineMarker(pipeline, trialMarker(ev.label, "trial_start")).catch(
+            (error: unknown) =>
+              setLastError(error instanceof Error ? error.message : "Marker failed"),
+          );
+        }
       }
       if (ev.type === "TRIAL_COMPLETED") {
         useHudStore.setState({ score: ev.trialScore });
@@ -67,6 +74,13 @@ export function useGameBridgeEvents(
             score: ev.scoreDelta,
           }).catch((e: unknown) =>
             setLastError(e instanceof Error ? e.message : "Trial save failed"),
+          );
+        }
+        if (modeRef.current === "offline") {
+          const pipeline = useSettingsStore.getState().settings.pipeline;
+          void pipelineMarker(pipeline, trialMarker(ev.label, "trial_end")).catch(
+            (error: unknown) =>
+              setLastError(error instanceof Error ? error.message : "Marker failed"),
           );
         }
       }

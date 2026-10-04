@@ -9,7 +9,7 @@
 }
 
 .back {
-  color: #89b4fa;
+  color: var(--ink);
   text-decoration: none;
   font-size: 0.9rem;
 }
@@ -20,16 +20,16 @@
 
 .title {
   margin: 0.5rem 0;
-  color: #cdd6f4;
+  color: var(--ink);
 }
 
 .lead {
   margin: 0;
-  color: #a6adc8;
+  color: var(--muted);
   font-size: 0.95rem;
 }
 
 .error {
-  color: #f38ba8;
+  color: var(--danger);
   margin-bottom: 1rem;
 }

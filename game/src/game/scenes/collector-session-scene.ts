@@ -3,6 +3,7 @@ import Phaser from "phaser";
 import type { GameBridge } from "@/game/bridge/game-bridge";
 import type { CollectorStartPayload } from "@/game/scenes/collector-session-types";
 import { nextCollectorAction } from "@/game/scenes/collector-fsm";
+import { GAME_HEIGHT, GAME_WIDTH } from "@/game/config/constants";
 import { CollectorStage } from "@/game/stage/CollectorStage";
 import { scoreForCollection } from "@/game/systems/scoring";
 import { transitionTo } from "@/game/systems/trial-fsm";
@@ -22,7 +23,6 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
   protected settings!: SessionSettings;
   protected trials: TrialDefinition[] = [];
   protected trialIndex = -1;
-  protected paused = false;
   protected score = 0;
   protected successCount = 0;
   protected collected = false;
@@ -50,12 +50,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     this.settings = payload.settings;
     this.trials = payload.trials;
 
-    this.stage = new CollectorStage(
-      this,
-      this.settings.general.width,
-      this.settings.general.height,
-      this.bannerLabel,
-    );
+    this.stage = new CollectorStage(this, GAME_WIDTH, GAME_HEIGHT, this.bannerLabel);
     this.onSessionCreate();
 
     this.bridge.emit({
@@ -77,7 +72,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     for (const cmd of bridge.consumeCommands()) {
       this.handleCommand(cmd);
     }
-    if (this.paused || this.fsm.phase === "finished" || this.trialIndex < 0) {
+    if (this.fsm.phase === "finished" || this.trialIndex < 0) {
       return;
     }
     const now = this.time.now;
@@ -171,17 +166,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
   }
 
   private handleCommand(cmd: GameCommand): void {
-    if (cmd.type === "PAUSE_SESSION") {
-      this.paused = true;
-      this.time.paused = true;
-      this.tweens.pauseAll();
-      this.bridge.emit({ type: "SESSION_PAUSED" });
-    } else if (cmd.type === "RESUME_SESSION") {
-      this.paused = false;
-      this.time.paused = false;
-      this.tweens.resumeAll();
-      this.bridge.emit({ type: "SESSION_RESUMED" });
-    } else if (cmd.type === "STOP_SESSION") {
+    if (cmd.type === "STOP_SESSION") {
       this.stage.stopAutoMove();
       this.onSessionStop();
       this.flushTelemetry();

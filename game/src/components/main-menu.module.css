@@ -8,18 +8,18 @@
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #89b4fa;
+  color: var(--accent);
   margin: 0 0 0.5rem;
 }
 
 .title {
   font-size: clamp(2rem, 4vw, 2.75rem);
   margin: 0 0 1rem;
-  color: #cdd6f4;
+  color: var(--ink);
 }
 
 .lead {
-  color: #bac2de;
+  color: var(--muted);
   line-height: 1.6;
   margin: 0 0 2rem;
 }
@@ -40,12 +40,12 @@
 }
 
 .primary {
-  background: #89b4fa;
-  color: #11111b;
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .secondary {
   background: transparent;
-  color: #cdd6f4;
-  border: 1px solid #45475a;
+  color: var(--ink);
+  border: 1px solid var(--line);
 }

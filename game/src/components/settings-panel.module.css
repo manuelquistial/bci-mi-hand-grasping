@@ -1,7 +1,7 @@
 .panel {
-  background: #181825;
-  border: 1px solid #313244;
-  border-radius: 8px;
+  background: var(--surface, #292524);
+  border: 1px solid var(--line, #44403c);
+  border-radius: 10px;
   padding: 1rem;
 }
 
@@ -9,11 +9,11 @@
   margin: 0 0 0.75rem;
   font-size: 1.1rem;
   font-weight: 600;
-  color: #cdd6f4;
+  color: var(--ink, #e7e5e4);
 }
 
 .fieldset {
-  border: 1px solid #313244;
+  border: 1px solid var(--line, #44403c);
   border-radius: 6px;
   margin: 0 0 0.75rem;
   padding: 0.5rem 0.75rem;
@@ -22,7 +22,7 @@
 .fieldset legend {
   padding: 0 0.25rem;
   font-size: 0.8rem;
-  color: #a6adc8;
+  color: var(--muted, #a8a29e);
 }
 
 .row {
@@ -30,31 +30,15 @@
   flex-direction: column;
   gap: 0.25rem;
   font-size: 0.85rem;
-  color: #bac2de;
+  color: var(--muted, #a8a29e);
   margin-bottom: 0.5rem;
 }
 
 .row input,
 .row select {
-  background: #11111b;
-  border: 1px solid #45475a;
-  color: #cdd6f4;
+  background: var(--bg, #1c1917);
+  border: 1px solid var(--line, #44403c);
+  color: var(--ink, #e7e5e4);
   border-radius: 4px;
   padding: 0.35rem 0.5rem;
-}
-
-.rowCheck {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-  color: #bac2de;
-  margin-bottom: 0.5rem;
-  cursor: pointer;
-}
-
-.rowCheck input {
-  width: auto;
-  cursor: pointer;
 }

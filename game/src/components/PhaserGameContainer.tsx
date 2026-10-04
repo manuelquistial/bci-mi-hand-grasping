@@ -7,11 +7,9 @@ import type { GameBridge } from "@/game/bridge/game-bridge";
 
 type Props = {
   bridge: GameBridge;
-  width: number;
-  height: number;
 };
 
-export function PhaserGameContainer({ bridge, width, height }: Props) {
+export function PhaserGameContainer({ bridge }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const gameRef = useRef<import("phaser").Game | null>(null);
 
@@ -20,7 +18,7 @@ export function PhaserGameContainer({ bridge, width, height }: Props) {
     if (!el) return;
     let cancelled = false;
     void (async () => {
-      const game = await createCollectorGame(el, bridge, width, height);
+      const game = await createCollectorGame(el, bridge);
       if (cancelled) {
         destroyGame(game);
         return;
@@ -32,18 +30,13 @@ export function PhaserGameContainer({ bridge, width, height }: Props) {
       destroyGame(gameRef.current);
       gameRef.current = null;
     };
-  }, [bridge, width, height]);
+  }, [bridge]);
 
   return (
     <div
       ref={hostRef}
       className="phaser-host"
-      style={{
-        width: "100%",
-        maxWidth: width,
-        aspectRatio: `${width} / ${height}`,
-        margin: "0 auto",
-      }}
+      style={{ width: "100%", height: "100%" }}
     />
   );
 }

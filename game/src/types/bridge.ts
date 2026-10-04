@@ -17,8 +17,6 @@ export type GameCommand =
         trials: TrialDefinition[];
       };
     }
-  | { type: "PAUSE_SESSION" }
-  | { type: "RESUME_SESSION" }
   | { type: "STOP_SESSION" }
   | { type: "UPDATE_SETTINGS"; payload: { settings: SessionSettings } }
   | {
@@ -30,8 +28,6 @@ export type GameCommand =
 
 export type GameEvent =
   | { type: "SESSION_STARTED"; sessionId: string; mode: SessionMode }
-  | { type: "SESSION_PAUSED" }
-  | { type: "SESSION_RESUMED" }
   | { type: "SESSION_STOPPED" }
   | {
       type: "PHASE_CHANGED";

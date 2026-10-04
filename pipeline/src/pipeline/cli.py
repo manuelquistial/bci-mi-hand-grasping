@@ -96,6 +96,28 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not look for a Markers stream",
     )
+
+    show_p = sub.add_parser("show", help="Summarize a recorded EEG session directory")
+    show_p.add_argument("path", help="Session directory written by pipeline record/serve")
+
+    serve_p = sub.add_parser("serve", help="Session API for the game (record and online)")
+    serve_p.add_argument("--host", default="127.0.0.1")
+    serve_p.add_argument("--port", type=int, default=8765)
+    serve_p.add_argument(
+        "--recordings",
+        default=None,
+        help="Directory for session folders (default: pipeline/recordings)",
+    )
+
+    record_p = sub.add_parser("record", help="Record a Cyton LSL stream to a session folder")
+    record_p.add_argument("--session-id", required=True)
+    record_p.add_argument("--duration", type=float, required=True, help="Seconds to record")
+    record_p.add_argument("--output", default=None, help="Recordings root (default: pipeline/recordings)")
+    record_p.add_argument(
+        "--stream-name",
+        default=None,
+        help="Exact LSL name (default: first stream of type EEG)",
+    )
     return parser
 
 
@@ -191,6 +213,79 @@ def _cmd_view(args: argparse.Namespace) -> int:
         return 1
 
 
+def _cmd_show(args: argparse.Namespace) -> int:
+    from pipeline.session import load_recording, sample_index_for_time
+
+    try:
+        recording = load_recording(args.path)
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    duration = 0.0
+    if recording.n_samples and recording.sample_rate_hz:
+        duration = recording.n_samples / recording.sample_rate_hz
+    device = recording.device
+    print(f"session: {recording.session_id}")
+    print(f"path: {recording.root}")
+    print(
+        f"signal: {recording.n_samples} samples, {recording.n_channels} ch, "
+        f"{recording.sample_rate_hz:g} Hz, {recording.units}, {duration:.2f}s"
+    )
+    print(f"channels: {', '.join(recording.channel_labels)}")
+    print(
+        f"device: {device.get('board')}  ground={device.get('ground')}  "
+        f"reference={device.get('reference')}"
+    )
+    print(f"markers: {len(recording.markers)}")
+    for marker in recording.markers:
+        index = sample_index_for_time(recording.timestamps, marker.lsl_time)
+        print(f"  [{index}] {marker.kind}:{marker.code}:{marker.label} t={marker.lsl_time:.4f}")
+    return 0
+
+
+def _cmd_serve(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from pipeline.service import default_recordings_root, serve
+
+    root = Path(args.recordings) if args.recordings else default_recordings_root()
+    serve(host=args.host, port=args.port, recordings_root=root)
+    return 0
+
+
+def _cmd_record(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from pipeline.service import PipelineService, default_recordings_root
+
+    root = Path(args.output) if args.output else default_recordings_root()
+    service = PipelineService(root)
+    print(
+        f"Recording Cyton stream into {root / args.session_id} for {args.duration:g}s…",
+        flush=True,
+    )
+    try:
+        started = service.start_recording(
+            args.session_id,
+            stream_name=args.stream_name,
+        )
+    except (TimeoutError, ValueError, FileExistsError, RuntimeError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Connected: {started['stream_name']}", flush=True)
+    try:
+        time.sleep(args.duration)
+    except KeyboardInterrupt:
+        print("\nStopping.")
+    finally:
+        result = service.stop_recording()
+    print(
+        f"Saved {result.get('n_samples', 0)} samples and "
+        f"{result.get('n_markers', 0)} markers to {result.get('path')}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -200,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_read(args)
     if args.command == "view":
         return _cmd_view(args)
+    if args.command == "show":
+        return _cmd_show(args)
+    if args.command == "serve":
+        return _cmd_serve(args)
+    if args.command == "record":
+        return _cmd_record(args)
     parser.error(f"Unknown command: {args.command}")
     return 2
 

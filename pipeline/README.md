@@ -58,6 +58,42 @@ Opciones útiles:
 | `--markers-name` | Nombre del stream LSL Markers (default: `<eeg>_Markers`) |
 | `--no-markers` | No buscar stream de marcadores |
 
+### Grabar una sesión Cyton
+
+El servicio local es el que obedece al botón Start del game. La Cyton entra por LSL: 8 canales, 250 Hz, µV. BIAS (ground) y SRB2 (referencia) se guardan como metadatos, no como columnas.
+
+```bash
+uv run pipeline serve
+uv run pipeline record --session-id demo --duration 10
+uv run pipeline show recordings/demo
+```
+
+Cada sesión es una carpeta:
+
+| Archivo | Contenido |
+|---------|-----------|
+| `signal.f32` | float32 little-endian, `(muestras, 8)`, µV |
+| `time.f64` | timestamp LSL por muestra |
+| `markers.jsonl` | kind, code, label y tiempo LSL |
+| `session.json` | perfil de la Cyton y etiquetas |
+
+El simulador no escribe esa carpeta. La lee con `--dataset recorded_session --file <carpeta>`.
+
+### API del servicio
+
+`http://127.0.0.1:8765`
+
+| Método | Ruta | Uso |
+|--------|------|-----|
+| POST | `/v1/record/start` | Empieza a grabar el inlet EEG (`session_id`) |
+| POST | `/v1/record/marker` | Anota un trial (`kind`, `code`, `label`) |
+| POST | `/v1/record/stop` | Cierra la carpeta |
+| POST | `/v1/online/start` | Arranca el simulador o escucha la Cyton |
+| POST | `/v1/online/stop` | Detiene la corrida online |
+| GET | `/v1/status` | Muestras grabadas o vistas |
+
+El procesamiento de la señal (filtros, características, clasificador) queda pendiente. Online hoy cuenta las muestras que llegan por el mismo inlet.
+
 ### API Python
 
 ```python

@@ -1,6 +1,7 @@
 .wrap {
   min-height: 100vh;
-  background: #11111b;
+  background: var(--bg);
+  color: var(--ink);
 }
 
 .header {
@@ -8,17 +9,17 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--line);
 }
 
 .back,
 .sub {
-  color: #89b4fa;
+  color: var(--ink);
   text-decoration: none;
   font-size: 0.9rem;
 }
 
 .back:hover,
 .sub:hover {
-  text-decoration: underline;
+  color: var(--accent);
 }

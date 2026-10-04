@@ -62,6 +62,14 @@ npm run dev
 
 Then open [http://localhost:3000](http://localhost:3000). Use **Game** to run sessions and **Results** to inspect past sessions and export JSON/CSV.
 
+Offline **Start session** asks the pipeline service to record the Cyton LSL inlet. Online **Start session** asks it to start the simulator (or to listen to the Cyton when Online source is `cyton`). Run the service first, from `pipeline/`:
+
+```bash
+uv run pipeline serve
+```
+
+The recording is written to `pipeline/recordings/<session id>`. Point **Recorded session dir** at that folder and set Dataset to `recorded_session` to replay it online.
+
 ## Tests
 
 ```bash
@@ -145,7 +153,7 @@ The repo does not ship a WebSocket server; run your own relay next to the browse
 ### UI
 
 - **HUD** (online): latest BCI input status line.
-- **Online BCI** panel: status, **BCI debug logging** toggle, and test dispatches. Debug output uses `Settings → Online BCI input → BCI debug logging`.
+- Debug output uses `Settings → Online BCI input → BCI debug logging`.
 
 See [`src/game/adapters/window-event-control-adapter.ts`](src/game/adapters/window-event-control-adapter.ts) and [`src/game/adapters/websocket-control-adapter.ts`](src/game/adapters/websocket-control-adapter.ts).
 

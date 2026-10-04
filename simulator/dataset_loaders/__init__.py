@@ -9,9 +9,11 @@ from .base import BaseDatasetLoader, DatasetMetadata, SubjectRunInfo
 from .bci_competition_iv2a import BCICompetitionIV2aLoader
 from .generic_csv import GenericCSVLoader
 from .physionet_eegbci import PhysioNetEEGBCILoader
+from .recorded_session import RecordedSessionLoader
 
 # Loaders disponibles (orden: más específico primero para auto-detección)
 LOADERS: list[Type[BaseDatasetLoader]] = [
+    RecordedSessionLoader,
     BCICompetitionIV2aLoader,
     PhysioNetEEGBCILoader,
     GenericCSVLoader,
@@ -99,6 +101,7 @@ __all__ = [
     "BaseDatasetLoader",
     "DatasetMetadata",
     "SubjectRunInfo",
+    "RecordedSessionLoader",
     "BCICompetitionIV2aLoader",
     "PhysioNetEEGBCILoader",
     "GenericCSVLoader",

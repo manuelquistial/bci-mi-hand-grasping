@@ -24,7 +24,7 @@ export function ResultsPageClient() {
     <div className={styles.page}>
       <header className={styles.header}>
         <Link href="/" className={styles.back}>
-          ← Home
+          Home
         </Link>
         <h1 className={styles.title}>Sessions</h1>
         <p className={styles.lead}>

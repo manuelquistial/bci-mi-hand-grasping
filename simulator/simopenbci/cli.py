@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -261,6 +262,14 @@ def run(
     else:
         loader = create_loader(file_path=file_path, **overrides)
 
+    bind = getattr(loader, "bind", None)
+    if callable(bind):
+        try:
+            bind(file_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            notifier.error(str(exc))
+            return 1
+
     factory = sink_factory or (lambda: LslSampleSink())
     sink = factory()
     use_lsl_timing = sink_factory is None
@@ -273,16 +282,22 @@ def run(
         hold_seconds=0.5 if use_lsl_timing else 0.0,
     )
 
-    events = resolve_events(file_path, args.events)
+    events_from_loader = getattr(loader, "load_events", None)
+    if args.events:
+        events = resolve_events(file_path, args.events)
+        events_origin = args.events
+    elif callable(events_from_loader):
+        events = events_from_loader(file_path)
+        events_origin = "session markers"
+    else:
+        events = resolve_events(file_path, None)
+        events_origin = Path(file_path).with_suffix(".events.csv").name
     marker_sink = None
     if events and not args.no_markers and use_lsl_timing:
         marker_sink = LslMarkerSink()
 
     if events:
-        notifier.progress(
-            f"Events file: {args.events or Path(file_path).with_suffix('.events.csv').name} "
-            f"({len(events)} markers)"
-        )
+        notifier.progress(f"Events: {events_origin} ({len(events)} markers)")
     elif args.events:
         notifier.warning(f"No events loaded from {args.events}")
 

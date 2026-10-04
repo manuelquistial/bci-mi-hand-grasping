@@ -1,5 +1,3 @@
-import { GAME_HEIGHT, GAME_WIDTH } from "@/game/config/constants";
-
 import type { SessionMode } from "./domain";
 
 export type TargetSpawnMode = "random" | "alternate" | "balanced";
@@ -8,8 +6,6 @@ export type SequenceMode = "random_balanced" | "predefined" | "random";
 
 export type SessionSettings = {
   general: {
-    width: number;
-    height: number;
     fullscreenPlaceholder: boolean;
     audioPlaceholder: boolean;
   };
@@ -49,12 +45,17 @@ export type SessionSettings = {
     randomSeed: number | null;
     sequenceMode: SequenceMode;
   };
+  pipeline: {
+    baseUrl: string;
+    lslName: string;
+    onlineSource: "simulator" | "cyton";
+    dataset: string;
+    sessionDir: string;
+  };
 };
 
 export const defaultSessionSettings = (): SessionSettings => ({
   general: {
-    width: GAME_WIDTH,
-    height: GAME_HEIGHT,
     fullscreenPlaceholder: false,
     audioPlaceholder: false,
   },
@@ -87,6 +88,13 @@ export const defaultSessionSettings = (): SessionSettings => ({
     blockSize: 4,
     randomSeed: 42,
     sequenceMode: "random_balanced",
+  },
+  pipeline: {
+    baseUrl: "http://127.0.0.1:8765",
+    lslName: "OpenBCI_EEG",
+    onlineSource: "simulator",
+    dataset: "bci_iv2a",
+    sessionDir: "",
   },
 });
 

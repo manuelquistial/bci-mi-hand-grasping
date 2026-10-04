@@ -15,7 +15,7 @@ type HudState = {
   rightProb: number | null;
   controlSignal: number | null;
   bciStatusLine: string | null;
-  sessionStatus: "idle" | "running" | "paused" | "completed";
+  sessionStatus: "idle" | "running" | "completed";
   reset: () => void;
 };
 

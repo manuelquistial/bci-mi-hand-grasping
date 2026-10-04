@@ -116,6 +116,17 @@ uv run simopenbci --dataset physionet_eegbci --subject S001 \
 
 Desactivar marcadores: `--no-markers`. Ruta explícita: `--events path/to/file.events.csv`.
 
+### Sesión grabada por el pipeline
+
+El pipeline escribe la carpeta (`signal.f32`, `time.f64`, `markers.jsonl`, `session.json`). Este simulador solo la lee:
+
+```bash
+uv run simopenbci --dataset recorded_session --file /ruta/a/la/sesion \
+  --lsl-name OpenBCI_EEG --no-dialog
+```
+
+Otros datasets (BCI IV 2a, PhysioNet, CSV) siguen en sus loaders.
+
 ## Uso por línea de comandos
 
 Sin argumentos, streamea el **primer sujeto** de BCI IV 2a desde `sample_data/bci_iv2a/` (o `data/` si existe):

@@ -13,8 +13,14 @@ export function MainMenu() {
         telemetry and session data.
       </p>
       <nav className={styles.nav}>
-        <Link className={styles.primary} href="/game">
-          Open experiment
+        <Link className={styles.primary} href="/game?step=offline">
+          Offline
+        </Link>
+        <Link className={styles.primary} href="/game?step=simulator">
+          Online simulated
+        </Link>
+        <Link className={styles.primary} href="/game?step=real">
+          Online real
         </Link>
         <Link className={styles.secondary} href="/results">
           Sessions & export

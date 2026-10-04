@@ -3,9 +3,9 @@
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 0.35rem 1rem;
   font-size: 0.85rem;
-  color: #bac2de;
-  background: #181825;
-  border: 1px solid #313244;
+  color: var(--ink, #e7e5e4);
+  background: var(--surface, #292524);
+  border: 1px solid var(--line, #44403c);
   border-radius: 8px;
   padding: 0.75rem 1rem;
 }
@@ -17,7 +17,7 @@
 }
 
 .k {
-  color: #6c7086;
+  color: var(--muted, #a8a29e);
   min-width: 4rem;
 }
 
