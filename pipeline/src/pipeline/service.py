@@ -19,10 +19,20 @@ from urllib.parse import parse_qs, urlparse
 import numpy as np
 
 from pipeline.cyton import channel_labels_for, validate_cyton_stream
+from pipeline.emg import validate_emg_stream
+from pipeline.epochs import is_activity_onset
 from pipeline.live import LiveSignal, parse_marker_text
+from pipeline.windows import ActivityWindower
 from pipeline.models import StreamSummary
-from pipeline.recorder import SessionRecorder, open_session_writer
-from pipeline.session import SESSION_NAME, list_recordings, load_recording
+from pipeline.preprocess import (
+    PREVIEW_SECONDS,
+    FilterSpec,
+    apply_notch_then_bandpass,
+    decimate_time,
+    traces,
+)
+from pipeline.recorder import EmgRecorder, SessionRecorder, open_session_writer
+from pipeline.session import SESSION_NAME, EmgWriter, list_recordings, load_recording
 
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 ProcessStarter = Callable[[list[str]], "subprocess.Popen[Any]"]
@@ -43,6 +53,7 @@ def default_simulator_project() -> Path:
 # One simulator process publishes one stream. The name is not a user setting.
 SIMULATOR_LSL_NAME = "OpenBCI_EEG"
 DatasetLister = Callable[[], list[dict[str, str]]]
+WindowLoader = Callable[..., dict[str, Any]]
 SubjectLister = Callable[[str], list[dict[str, str]]]
 
 
@@ -113,6 +124,51 @@ def query_simulator_subjects(simulator_project: Path, dataset: str) -> list[dict
     return subjects
 
 
+def query_simulator_window(
+    simulator_project: Path,
+    *,
+    dataset: str,
+    subject: str | None,
+    session_dir: str | None,
+    seconds: float,
+) -> dict[str, Any]:
+    """Read an opening window from the dataset. The simulator only reads the file."""
+    if not dataset:
+        raise ValueError("dataset is required")
+    command = [
+        "uv",
+        "run",
+        "--project",
+        str(simulator_project),
+        "simopenbci",
+        "--no-dialog",
+        "--dataset",
+        dataset,
+        "--dump-seconds",
+        str(seconds),
+    ]
+    if session_dir:
+        command.extend(["--file", session_dir])
+    if subject:
+        command.extend(["--subject", subject])
+    completed = subprocess.run(
+        command,
+        cwd=simulator_project,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "simulator exited").strip()
+        last = detail.splitlines()[-1] if detail else "Could not read the participant"
+        raise RuntimeError(last)
+    data = json.loads(completed.stdout or "{}")
+    if not isinstance(data, dict) or not data.get("samples"):
+        raise RuntimeError("participant window must include samples")
+    return data
+
+
 def lsl_clock() -> float:
     """LSL clock when pylsl is available, otherwise the wall clock."""
     try:
@@ -142,6 +198,22 @@ def open_eeg_stream(*, stream_name: str | None, wait_seconds: float) -> Any:
     if stream_name:
         return LslStreamReader.open(name=stream_name, wait_seconds=wait_seconds)
     return LslStreamReader.open(stream_type="EEG", wait_seconds=wait_seconds)
+
+
+def open_emg_stream(*, wait_seconds: float) -> Any:
+    """Forearm EMG inlet. Eight electrodes, type EMG."""
+    from pipeline.reader import LslStreamReader
+
+    try:
+        reader = LslStreamReader.open(stream_type="EMG", wait_seconds=wait_seconds)
+    except TimeoutError as exc:
+        raise TimeoutError(
+            "No EMG LSL stream. Expect 8 forearm electrodes: "
+            "4 on the left arm and 4 on the right, "
+            "2 anterior and 2 posterior on each forearm."
+        ) from exc
+    validate_emg_stream(reader.summary)
+    return reader
 
 
 def start_simulator_process(command: list[str]) -> subprocess.Popen[Any]:
@@ -218,27 +290,33 @@ class PipelineService:
         recordings_root: Path,
         *,
         eeg_opener: StreamOpener | None = None,
+        emg_opener: StreamOpener | None = None,
         marker_opener: Callable[..., Any] | None = None,
         clock: Callable[[], float] | None = None,
         simulator_project: Path | None = None,
         process_starter: ProcessStarter | None = None,
         dataset_lister: DatasetLister | None = None,
         subject_lister: SubjectLister | None = None,
+        window_loader: WindowLoader | None = None,
     ) -> None:
         self.recordings_root = Path(recordings_root)
         self.recordings_root.mkdir(parents=True, exist_ok=True)
         self._eeg_opener = eeg_opener or open_eeg_stream
+        self._emg_opener = open_emg_stream if emg_opener is None and eeg_opener is None else emg_opener
         self._marker_opener = open_marker_stream if marker_opener is None and eeg_opener is None else marker_opener
         self._clock = clock or lsl_clock
         self._simulator_project = Path(simulator_project or default_simulator_project())
         self._process_starter = process_starter or start_simulator_process
         self._dataset_lister = dataset_lister
         self._subject_lister = subject_lister
+        self._window_loader = window_loader
         self._datasets: list[dict[str, str]] | None = None
         self._subjects: dict[str, list[dict[str, str]]] = {}
         self._lock = threading.Lock()
         self._starting = False
         self._recorder: SessionRecorder | None = None
+        self._emg_recorder: EmgRecorder | None = None
+        self._emg_samples = 0
         self._session_id: str | None = None
         self._proc: subprocess.Popen[Any] | None = None
         self._online_stop: threading.Event | None = None
@@ -246,6 +324,8 @@ class PipelineService:
         self._online_samples = 0
         self._online_error: str | None = None
         self._online_source: str | None = None
+        self._online_dataset: str | None = None
+        self._windower = ActivityWindower()
         self._live = LiveSignal()
 
     def list_datasets(self) -> dict[str, Any]:
@@ -278,6 +358,55 @@ class PipelineService:
             cached = lister(dataset)
             self._subjects[dataset] = cached
         return {"subjects": cached}
+
+    def preview_filter(
+        self,
+        *,
+        dataset: str,
+        subject: str | None,
+        session_dir: str | None,
+        notch_hz: float,
+        band_low_hz: float,
+        band_high_hz: float,
+        order: int,
+    ) -> dict[str, Any]:
+        """First offline module: notch, then bandpass, on one participant window."""
+        loader = self._window_loader or (
+            lambda **kwargs: query_simulator_window(self._simulator_project, **kwargs)
+        )
+        window = loader(
+            dataset=dataset,
+            subject=subject,
+            session_dir=session_dir,
+            seconds=PREVIEW_SECONDS,
+        )
+        samples = np.asarray(window["samples"], dtype=np.float64)
+        rate = float(window["sample_rate_hz"])
+        spec = FilterSpec(
+            notch_hz=float(notch_hz),
+            band_low_hz=float(band_low_hz),
+            band_high_hz=float(band_high_hz),
+            order=int(order),
+        )
+        filtered = apply_notch_then_bandpass(samples, rate, spec)
+        raw_view = decimate_time(samples)
+        filtered_view = decimate_time(filtered)
+        channels = [str(name) for name in window.get("channels") or []]
+        while len(channels) < int(raw_view.shape[1]):
+            channels.append(f"Ch{len(channels) + 1}")
+        return {
+            "dataset": dataset,
+            "subject": subject or "",
+            "sample_rate_hz": rate,
+            "seconds": round(samples.shape[0] / rate, 3) if rate else 0,
+            "channels": channels[: int(raw_view.shape[1])],
+            "notch_hz": spec.notch_hz,
+            "band_low_hz": spec.band_low_hz,
+            "band_high_hz": spec.band_high_hz,
+            "order": spec.order,
+            "raw": traces(raw_view),
+            "filtered": traces(filtered_view),
+        }
 
     def _recording_options(self) -> list[dict[str, str]]:
         options: list[dict[str, str]] = []
@@ -320,11 +449,22 @@ class PipelineService:
                 raise FileExistsError(f"Session already recorded: {session_id}")
             self._starting = True
         reader = None
+        emg_reader = None
         try:
             reader = self._eeg_opener(stream_name=stream_name or None, wait_seconds=wait_seconds)
             summary: StreamSummary = reader.summary
             validate_cyton_stream(summary)
+            if self._emg_opener is None:
+                raise RuntimeError("EMG inlet is not configured")
+            emg_reader = self._emg_opener(wait_seconds=wait_seconds)
+            emg_summary: StreamSummary = emg_reader.summary
+            validate_emg_stream(emg_summary)
             writer = open_session_writer(root, reader)
+            emg_writer = EmgWriter(
+                root,
+                sample_rate_hz=float(emg_summary.nominal_srate),
+                stream_name=emg_summary.name,
+            )
             self._live.configure(
                 summary.channel_count,
                 summary.nominal_srate,
@@ -336,9 +476,13 @@ class PipelineService:
                 clock=self._clock,
                 on_samples=self._live.append,
             )
+            emg_recorder = EmgRecorder(emg_reader, emg_writer)
             recorder.start()
+            emg_recorder.start()
         except Exception:
             self._live.close()
+            if emg_reader is not None:
+                emg_reader.close()
             if reader is not None:
                 reader.close()
             with self._lock:
@@ -346,6 +490,7 @@ class PipelineService:
             raise
         with self._lock:
             self._recorder = recorder
+            self._emg_recorder = emg_recorder
             self._session_id = session_id
             self._starting = False
         return {
@@ -354,6 +499,9 @@ class PipelineService:
             "stream_name": summary.name,
             "channels": summary.channel_count,
             "sample_rate_hz": summary.nominal_srate,
+            "emg_stream_name": emg_summary.name,
+            "emg_channels": emg_summary.channel_count,
+            "emg_sample_rate_hz": emg_summary.nominal_srate,
         }
 
     def add_marker(self, kind: str, code: str, label: str) -> dict[str, Any]:
@@ -369,12 +517,17 @@ class PipelineService:
     def stop_recording(self) -> dict[str, Any]:
         with self._lock:
             recorder = self._recorder
+            emg_recorder = self._emg_recorder
             self._recorder = None
+            self._emg_recorder = None
             self._session_id = None
         self._live.close()
-        if recorder is None:
+        if recorder is None and emg_recorder is None:
             return {"stopped": False}
-        path = recorder.stop()
+        emg_samples = emg_recorder.stop() if emg_recorder is not None else 0
+        path = recorder.stop() if recorder is not None else None
+        if path is None:
+            return {"stopped": True, "emg_samples": emg_samples}
         recording = load_recording(path)
         return {
             "stopped": True,
@@ -382,6 +535,7 @@ class PipelineService:
             "session_id": recording.session_id,
             "n_samples": recording.n_samples,
             "n_markers": len(recording.markers),
+            "emg_samples": recording.emg_samples.shape[0],
         }
 
     def start_online(
@@ -398,10 +552,10 @@ class PipelineService:
         max_samples: int | None = None,
         wait_seconds: float = 5.0,
     ) -> dict[str, Any]:
-        if source not in {"simulator", "cyton"}:
-            raise ValueError("source must be 'simulator' or 'cyton'")
+        if source not in {"simulator", "cyton", "pre_model"}:
+            raise ValueError("source must be 'simulator', 'cyton', or 'pre_model'")
         command: list[str] | None = None
-        if source == "simulator":
+        if source in {"simulator", "pre_model"}:
             command = build_simulator_command(
                 simulator_project=self._simulator_project,
                 lsl_name=lsl_name,
@@ -418,14 +572,17 @@ class PipelineService:
         self.stop_online()
         with self._lock:
             self._online_samples = 0
+            self._emg_samples = 0
             self._online_error = None
             self._online_source = source
+            self._online_dataset = dataset
+            self._windower.reset()
             self._online_stop = threading.Event()
         if command is not None:
             proc = self._process_starter(command)
             with self._lock:
                 self._proc = proc
-        stream_name = lsl_name if source == "simulator" else (lsl_name or None)
+        stream_name = lsl_name if source in {"simulator", "pre_model"} else (lsl_name or None)
         listener = threading.Thread(
             target=self._listen,
             args=(stream_name, source == "cyton", wait_seconds),
@@ -466,23 +623,52 @@ class PipelineService:
             error = self._online_error
             source = self._online_source
             self._online_source = None
+            self._online_dataset = None
+            self._windower.reset()
         if proc is None and listener is None:
             return {"stopped": False}
         return {"stopped": True, "source": source, "samples_seen": samples, "error": error}
 
+    def mark_online(self, kind: str, code: str, label: str) -> dict[str, Any]:
+        """Window the live EEG for one Online real trial activity.
+
+        The session already defines the trial. This marks the activity phase
+        of that trial. Online simulated does not use it: its activity times
+        come from the dataset markers.
+        """
+        if kind not in {"imagery_start", "imagery_end"}:
+            raise ValueError("marker kind must be imagery_start or imagery_end")
+        if not label:
+            raise ValueError("marker label is required")
+        now = float(self._clock())
+        with self._lock:
+            if self._online_source != "cyton":
+                raise RuntimeError("No online real session in progress")
+        if kind == "imagery_start":
+            current = self._windower.begin(now, label, code or kind)
+        else:
+            current = self._windower.close_open(now)
+            if current is None:
+                raise RuntimeError("Motor imagery has not started")
+        return {"accepted": True, "activity": current}
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             recorder = self._recorder
+            emg_recorder = self._emg_recorder
             session_id = self._session_id
             proc = self._proc
             samples = self._online_samples
+            emg_samples = self._emg_samples
             error = self._online_error
             source = self._online_source
+            activity = self._windower.latest_view()
         recording = None
         if recorder is not None and session_id is not None:
             recording = {
                 "session_id": session_id,
                 "samples": recorder.writer.sample_count,
+                "emg_samples": emg_recorder.writer.sample_count if emg_recorder is not None else 0,
                 "path": str(recorder.writer.root),
             }
         online = None
@@ -492,7 +678,9 @@ class PipelineService:
                 "pid": proc.pid if proc is not None else None,
                 "running": proc.poll() is None if proc is not None else True,
                 "samples_seen": samples,
+                "emg_samples_seen": emg_samples if source == "cyton" else 0,
                 "error": error,
+                "activity": activity,
             }
         return {"recording": recording, "online": online}
 
@@ -504,10 +692,29 @@ class PipelineService:
                 raw = str(raw)
             kind, label = parse_marker_text(raw)
             self._live.add_marker(float(timestamp), kind, label)
+            self._window_dataset_activity(float(timestamp), kind, raw, label)
+
+    def _window_dataset_activity(self, timestamp: float, kind: str, raw: str, label: str) -> None:
+        with self._lock:
+            source = self._online_source
+            dataset = self._online_dataset or ""
+        if source != "simulator" or not is_activity_onset(dataset, kind, label):
+            return
+        parts = (raw or "").strip().split(":")
+        code = parts[1] if len(parts) >= 3 and parts[1] else kind
+        self._windower.begin(timestamp, label, code)
+
+    def _pull_emg(self, reader: Any) -> None:
+        chunk = reader.pull_chunk(timeout=0.0, max_samples=2048)
+        if not chunk.samples:
+            return
+        with self._lock:
+            self._emg_samples += len(chunk.samples)
 
     def _listen(self, stream_name: str | None, require_cyton: bool, wait_seconds: float) -> None:
         reader = None
         marker_reader = None
+        emg_reader = None
         deadline = time.monotonic() + wait_seconds
         last_error = "No LSL stream"
         try:
@@ -531,6 +738,10 @@ class PipelineService:
                 return
             if require_cyton:
                 validate_cyton_stream(reader.summary)
+                if self._emg_opener is None:
+                    raise RuntimeError("EMG inlet is not configured")
+                emg_reader = self._emg_opener(wait_seconds=min(1.0, wait_seconds))
+                validate_emg_stream(emg_reader.summary)
             self._live.configure(
                 reader.summary.channel_count,
                 reader.summary.nominal_srate,
@@ -547,12 +758,15 @@ class PipelineService:
             while self._online_stop is not None and not self._online_stop.is_set():
                 if marker_reader is not None:
                     self._ingest_markers(marker_reader)
+                if emg_reader is not None:
+                    self._pull_emg(emg_reader)
                 chunk = reader.pull_chunk(timeout=0.1, max_samples=2048)
                 if chunk.samples:
                     self._live.append(
                         np.asarray(chunk.samples, dtype=np.float64),
                         chunk.timestamps,
                     )
+                    self._windower.push(np.asarray(chunk.samples, dtype=np.float64), chunk.timestamps)
                     with self._lock:
                         self._online_samples += len(chunk.samples)
                     continue
@@ -565,6 +779,8 @@ class PipelineService:
         finally:
             if marker_reader is not None:
                 marker_reader.close()
+            if emg_reader is not None:
+                emg_reader.close()
             if reader is not None:
                 reader.close()
             self._finish_listener()
@@ -665,12 +881,46 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
                         max_samples=_optional_int(body.get("max_samples")),
                         wait_seconds=float(body.get("wait_seconds") or 5),
                     )
+                elif path == "/v1/online/marker":
+                    payload = service.mark_online(
+                        str(body.get("kind") or ""),
+                        str(body.get("code") or ""),
+                        str(body.get("label") or ""),
+                    )
                 elif path == "/v1/online/stop":
                     payload = service.stop_online()
+                elif path == "/v1/pre-model/start":
+                    payload = service.start_online(
+                        source="pre_model",
+                        lsl_name="OpenBCI_EEG",
+                        dataset=_blank_to_none(body.get("dataset")),
+                        session_dir=_blank_to_none(body.get("session_dir")),
+                        subject=_blank_to_none(body.get("subject")),
+                        wait_seconds=float(body.get("wait_seconds") or 5),
+                    )
+                elif path == "/v1/pre-model/stop":
+                    payload = service.stop_online()
+                elif path == "/v1/pre-model/filter":
+                    payload = service.preview_filter(
+                        dataset=str(body.get("dataset") or ""),
+                        subject=_blank_to_none(body.get("subject")),
+                        session_dir=_blank_to_none(body.get("session_dir")),
+                        notch_hz=_number(body.get("notch_hz"), 50),
+                        band_low_hz=_number(body.get("band_low_hz"), 8),
+                        band_high_hz=_number(body.get("band_high_hz"), 30),
+                        order=int(_number(body.get("order"), 4)),
+                    )
                 else:
                     self._send(404, {"error": "not found"})
                     return
-            except (ValueError, FileExistsError, RuntimeError, TimeoutError, OSError) as exc:
+            except (
+                ValueError,
+                FileExistsError,
+                RuntimeError,
+                TimeoutError,
+                OSError,
+                subprocess.TimeoutExpired,
+            ) as exc:
                 self._send(400, {"error": str(exc)})
                 return
             except json.JSONDecodeError:
@@ -697,6 +947,12 @@ def _blank_to_none(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _number(value: object, default: float) -> float:
+    if value is None or value == "":
+        return default
+    return float(value)
 
 
 def _optional_int(value: object) -> int | None:

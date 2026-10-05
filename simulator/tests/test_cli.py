@@ -26,6 +26,29 @@ def test_list_datasets(capsys) -> None:
     ]
 
 
+def test_dump_seconds_prints_a_json_window(tmp_path: Path, capsys) -> None:
+    _write_signal(tmp_path, rows=200, channels=64)
+    code = run(
+        [
+            "--dataset",
+            "shuqfa2024",
+            "--data-root",
+            str(tmp_path),
+            "--subject",
+            "S001",
+            "--dump-seconds",
+            "1",
+            "--no-dialog",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sample_rate_hz"] == 160
+    assert len(payload["samples"]) == 160
+    assert len(payload["samples"][0]) == 64
+    assert payload["channels"][0] == "Fc5"
+
+
 def test_list_subjects_json(tmp_path: Path, capsys) -> None:
     _write_signal(tmp_path)
     code = run(

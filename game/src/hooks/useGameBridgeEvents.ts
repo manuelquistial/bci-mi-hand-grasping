@@ -7,7 +7,7 @@ import {
   apiPostTelemetry,
   apiPostTrial,
 } from "@/lib/api/client";
-import { pipelineMarker, trialMarker } from "@/lib/pipeline/client";
+import { imageryMarker, pipelineMarker, pipelineOnlineMarker, trialMarker } from "@/lib/pipeline/client";
 import type { GameBridge } from "@/game/bridge/game-bridge";
 import { useHudStore } from "@/state/hud-store";
 import { usePersistenceStore } from "@/state/persistence-store";
@@ -22,6 +22,16 @@ export function useGameBridgeEvents(
 
   useEffect(() => {
     const modeRef: { current: SessionMode | null } = { current: null };
+    const labelRef: { current: string } = { current: "" };
+    const imageryOpen: { current: boolean } = { current: false };
+    const markImagery = (kind: "imagery_start" | "imagery_end") => {
+      const pipeline = useSettingsStore.getState().settings.pipeline;
+      if (pipeline.onlineSource !== "cyton") return;
+      void pipelineOnlineMarker(pipeline, imageryMarker(labelRef.current, kind)).catch(
+        (error: unknown) =>
+          setLastError(error instanceof Error ? error.message : "Marker failed"),
+      );
+    };
     const unsub = bridge.subscribe((ev) => {
       if (ev.type === "SESSION_STARTED") {
         modeRef.current = ev.mode;
@@ -35,6 +45,10 @@ export function useGameBridgeEvents(
         setLastError(null);
       }
       if (ev.type === "SESSION_STOPPED") {
+        if (modeRef.current === "online" && imageryOpen.current) {
+          imageryOpen.current = false;
+          markImagery("imagery_end");
+        }
         useHudStore.setState({ sessionStatus: "idle", bciStatusLine: null });
         sessionIdRef.current = null;
         modeRef.current = null;
@@ -45,8 +59,16 @@ export function useGameBridgeEvents(
           trialIndex: ev.trialIndex,
           blockIndex: ev.blockIndex,
         });
+        if (modeRef.current === "online" && ev.phase === "control") {
+          imageryOpen.current = true;
+          markImagery("imagery_start");
+        } else if (modeRef.current === "online" && imageryOpen.current) {
+          imageryOpen.current = false;
+          markImagery("imagery_end");
+        }
       }
       if (ev.type === "TRIAL_STARTED") {
+        labelRef.current = ev.label;
         useHudStore.setState({
           label: ev.label,
           trialIndex: ev.trialIndex,

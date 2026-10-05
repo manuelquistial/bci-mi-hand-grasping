@@ -52,6 +52,12 @@ export type SessionSettings = {
     sessionDir: string;
     subject: string;
   };
+  preModel: {
+    notchHz: number;
+    bandLowHz: number;
+    bandHighHz: number;
+    order: number;
+  };
 };
 
 export const defaultSessionSettings = (): SessionSettings => ({
@@ -95,6 +101,12 @@ export const defaultSessionSettings = (): SessionSettings => ({
     dataset: "shuqfa2024",
     sessionDir: "",
     subject: "",
+  },
+  preModel: {
+    notchHz: 50,
+    bandLowHz: 8,
+    bandHighHz: 30,
+    order: 4,
   },
 });
 

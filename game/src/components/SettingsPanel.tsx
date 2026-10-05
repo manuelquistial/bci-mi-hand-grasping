@@ -12,7 +12,7 @@ import { useSettingsStore } from "@/state/settings-store";
 
 import styles from "./settings-panel.module.css";
 
-export type SetupScreen = "offline" | "simulator" | "signal" | "real";
+export type SetupScreen = "offline" | "pre-model" | "simulator" | "real";
 
 function selectedDatasetId(
   datasets: SimulatorDataset[],
@@ -34,10 +34,10 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
       ? "Offline"
       : screen === "simulator"
         ? "Simulator"
-        : screen === "signal"
-          ? "Online simulated signal"
+        : screen === "pre-model"
+          ? "Pre model"
           : "Real";
-  const showsDataset = screen === "simulator" || screen === "signal";
+  const showsDataset = screen === "simulator" || screen === "pre-model";
   const [datasets, setDatasets] = useState<SimulatorDataset[]>([]);
   const [datasetError, setDatasetError] = useState<string | null>(null);
   const [subjects, setSubjects] = useState<SimulatorSubject[]>([]);
@@ -45,7 +45,7 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
   const subjectsDataset = useRef(settings.pipeline.dataset);
 
   useEffect(() => {
-    if (screen !== "simulator" && screen !== "signal") return;
+    if (screen !== "simulator" && screen !== "pre-model") return;
     let cancelled = false;
     const baseUrl = useSettingsStore.getState().settings.pipeline.baseUrl;
     pipelineListDatasets(baseUrl)
@@ -68,7 +68,7 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
   }, [screen, setNested]);
 
   useEffect(() => {
-    if (screen !== "signal") return;
+    if (screen !== "pre-model") return;
     const dataset = settings.pipeline.dataset;
     const datasetChanged = subjectsDataset.current !== dataset;
     subjectsDataset.current = dataset;
@@ -111,6 +111,24 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
       <h2 id="settings-heading" className={styles.title}>
         {title}
       </h2>
+      {screen === "pre-model" ? (
+        <p className={styles.help}>
+          Offline, before epoching: notch, then bandpass. The default band is 8–30 Hz for
+          left/right hand imagery.
+        </p>
+      ) : null}
+      {screen === "simulator" ? (
+        <p className={styles.help}>
+          Activity times come from the dataset. The pipeline cuts the same 2 s windows
+          every 0.5 s: 0–2, 0.5–2.5, 1–3, 1.5–3.5, and 2–4.
+        </p>
+      ) : null}
+      {screen === "real" ? (
+        <p className={styles.help}>
+          Each trial comes from the session. During its activity the pipeline cuts 2 s
+          windows every 0.5 s: 0–2, 0.5–2.5, 1–3, 1.5–3.5, and 2–4.
+        </p>
+      ) : null}
 
       <fieldset className={styles.fieldset}>
         <legend>Pipeline</legend>
@@ -149,7 +167,7 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
               </select>
             </label>
             {datasetError ? <p className={styles.note}>{datasetError}</p> : null}
-            {screen === "signal" && subjects.length > 0 ? (
+            {screen === "pre-model" && subjects.length > 0 ? (
               <label className={styles.row}>
                 Participant
                 <select
@@ -164,12 +182,59 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
                 </select>
               </label>
             ) : null}
-            {screen === "signal" && subjectError ? (
+            {screen === "pre-model" && subjectError ? (
               <p className={styles.note}>{subjectError}</p>
             ) : null}
           </>
         ) : null}
       </fieldset>
+
+      {screen === "pre-model" ? (
+        <fieldset className={styles.fieldset}>
+          <legend>Filter</legend>
+          <label className={styles.row}>
+            Notch (Hz)
+            <input
+              type="number"
+              min={1}
+              step={1}
+              value={settings.preModel.notchHz}
+              onChange={(e) => setNested("preModel", { notchHz: Number(e.target.value) })}
+            />
+          </label>
+          <label className={styles.row}>
+            Low (Hz)
+            <input
+              type="number"
+              min={0.1}
+              step={0.5}
+              value={settings.preModel.bandLowHz}
+              onChange={(e) => setNested("preModel", { bandLowHz: Number(e.target.value) })}
+            />
+          </label>
+          <label className={styles.row}>
+            High (Hz)
+            <input
+              type="number"
+              min={0.1}
+              step={0.5}
+              value={settings.preModel.bandHighHz}
+              onChange={(e) => setNested("preModel", { bandHighHz: Number(e.target.value) })}
+            />
+          </label>
+          <label className={styles.row}>
+            Order
+            <input
+              type="number"
+              min={1}
+              max={8}
+              step={1}
+              value={settings.preModel.order}
+              onChange={(e) => setNested("preModel", { order: Number(e.target.value) })}
+            />
+          </label>
+        </fieldset>
+      ) : null}
 
       {showsDataset ? null : (
       <>

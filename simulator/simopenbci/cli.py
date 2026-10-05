@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -115,6 +116,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print the datasets this simulator can play as JSON, then exit.",
     )
     parser.add_argument(
+        "--dump-seconds",
+        type=float,
+        default=None,
+        help="Print the first seconds of the resolved file as JSON and exit. No LSL.",
+    )
+    parser.add_argument(
         "--events",
         type=str,
         default=None,
@@ -166,7 +173,7 @@ def _resolve_file_from_subject(
                 run_label = info.runs[0]
                 break
         run_label = run_label or "?"
-    print(f"Using subject {subject} run {run_label}: {resolved.name}")
+    print(f"Using subject {subject} run {run_label}: {resolved.name}", file=sys.stderr)
     return resolved
 
 
@@ -181,6 +188,36 @@ def _first_subject_file(dataset_id: str, data_root: Path) -> Path | None:
         return None
     # Pass run=None so loaders apply their own default (e.g. BCI prefers T).
     return cls.resolve_subject_file(data_root, first.subject_id, None)
+
+
+def _dump_seconds(loader: BaseDatasetLoader, file_path: str, seconds: float) -> int:
+    """Write one JSON object of the opening window. Nothing else goes to stdout."""
+    if seconds <= 0:
+        print("Error: --dump-seconds must be greater than 0", file=sys.stderr)
+        return 1
+    rate = float(loader.metadata.sampling_rate)
+    if rate <= 0:
+        print("Error: dataset sample rate is missing", file=sys.stderr)
+        return 1
+    limit = max(1, int(round(seconds * rate)))
+    rows: list[list[float]] = []
+    for index, sample in enumerate(loader.iter_samples(file_path)):
+        if index >= limit:
+            break
+        rows.append([float(value) for value in sample])
+    if not rows:
+        print(f"Error: no samples in {file_path}", file=sys.stderr)
+        return 1
+    print(
+        json.dumps(
+            {
+                "sample_rate_hz": rate,
+                "channels": list(loader.metadata.channel_names or []),
+                "samples": rows,
+            }
+        )
+    )
+    return 0
 
 
 def run(
@@ -254,7 +291,8 @@ def run(
         if resolved is not None:
             subjects = list_subjects_for_dataset(dataset_id, data_root)
             sid = subjects[0].subject_id
-            print(f"Dataset {dataset_id} @ {data_root}: subject {sid} ({resolved.name})")
+            if args.dump_seconds is None:
+                print(f"Dataset {dataset_id} @ {data_root}: subject {sid} ({resolved.name})")
             file_path = str(resolved)
 
     no_dialog = bool(args.no_dialog)
@@ -297,6 +335,9 @@ def run(
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             notifier.error(str(exc))
             return 1
+
+    if args.dump_seconds is not None:
+        return _dump_seconds(loader, file_path, float(args.dump_seconds))
 
     factory = sink_factory or (lambda: LslSampleSink())
     sink = factory()

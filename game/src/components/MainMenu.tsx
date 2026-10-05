@@ -16,11 +16,11 @@ export function MainMenu() {
         <Link className={styles.primary} href="/game?step=offline">
           Offline
         </Link>
+        <Link className={styles.primary} href="/game?step=pre-model">
+          Pre model
+        </Link>
         <Link className={styles.primary} href="/game?step=simulator">
           Online simulated
-        </Link>
-        <Link className={styles.primary} href="/game?step=signal">
-          Online simulated signal
         </Link>
         <Link className={styles.primary} href="/game?step=real">
           Online real

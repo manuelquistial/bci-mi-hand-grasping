@@ -9,8 +9,9 @@ from typing import Callable, Protocol
 import numpy as np
 
 from pipeline.cyton import channel_labels_for, validate_cyton_stream
+from pipeline.emg import validate_emg_stream
 from pipeline.models import SampleChunk, StreamSummary
-from pipeline.session import SessionWriter
+from pipeline.session import EmgWriter, SessionWriter
 
 
 class ChunkSource(Protocol):
@@ -83,6 +84,59 @@ class SessionRecorder:
         self.writer.append_samples(array, chunk.timestamps)
         if self._on_samples is not None:
             self._on_samples(array)
+
+
+class EmgRecorder:
+    """Pull the forearm EMG inlet into the session folder."""
+
+    def __init__(
+        self,
+        reader: ChunkSource,
+        writer: EmgWriter,
+        *,
+        pull_timeout: float = 0.05,
+    ) -> None:
+        validate_emg_stream(reader.summary)
+        self.reader = reader
+        self.writer = writer
+        self._pull_timeout = pull_timeout
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._error: BaseException | None = None
+
+    def start(self) -> None:
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"record-emg-{self.writer.root.name}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> int:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+        self.reader.close()
+        count = self.writer.sample_count
+        self.writer.close()
+        if self._error is not None:
+            raise self._error
+        return count
+
+    def _run(self) -> None:
+        try:
+            while not self._stop.is_set():
+                self._pull_once()
+            self._pull_once()
+        except BaseException as exc:  # noqa: BLE001 — surfaced from stop()
+            self._error = exc
+
+    def _pull_once(self) -> None:
+        chunk = self.reader.pull_chunk(timeout=self._pull_timeout, max_samples=2048)
+        if not chunk.samples:
+            return
+        array = np.asarray(chunk.samples, dtype=np.float64)
+        self.writer.append_samples(array, chunk.timestamps)
 
 
 def open_session_writer(root: Path, reader: ChunkSource) -> SessionWriter:

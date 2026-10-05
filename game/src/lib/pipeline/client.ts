@@ -126,55 +126,48 @@ export function pipelineOnlineStart(
     source: settings.onlineSource,
     dataset: settings.dataset,
     session_dir: settings.sessionDir,
-    ...(settings.subject ? { subject: settings.subject } : {}),
   });
 }
 
-export type SignalMarker = {
-  kind: string;
-  label: string;
-  position: number;
-};
-
-export type PipelineSignal = {
-  active: boolean;
-  channels: string[];
+export type FilterPreview = {
+  dataset: string;
+  subject: string;
   sampleRateHz: number;
-  samples: number[][];
-  markers: SignalMarker[];
+  seconds: number;
+  channels: string[];
+  notchHz: number;
+  bandLowHz: number;
+  bandHighHz: number;
+  order: number;
+  raw: number[][];
+  filtered: number[][];
 };
 
-export async function pipelineSignal(baseUrl: string): Promise<PipelineSignal> {
-  const url = `${baseUrl.replace(/\/$/, "")}/v1/signal`;
-  let response: Response;
-  try {
-    response = await fetch(url);
-  } catch {
-    throw new Error(
-      `Pipeline is not reachable at ${baseUrl}. Start it with \`uv run pipeline serve\` inside pipeline/.`,
-    );
-  }
-  const text = await response.text();
-  const payload = text
-    ? (JSON.parse(text) as {
-        error?: string;
-        active?: boolean;
-        channels?: string[];
-        sample_rate_hz?: number;
-        samples?: number[][];
-        markers?: SignalMarker[];
-      })
-    : {};
-  if (!response.ok) {
-    throw new Error(payload.error || `Pipeline responded ${response.status}`);
-  }
-  return {
-    active: Boolean(payload.active),
-    channels: payload.channels ?? [],
+export function pipelinePreModelFilter(
+  settings: SessionSettings,
+): Promise<FilterPreview> {
+  const filter = settings.preModel;
+  return postJson(settings.pipeline.baseUrl, "/v1/pre-model/filter", {
+    dataset: settings.pipeline.dataset,
+    session_dir: settings.pipeline.sessionDir,
+    ...(settings.pipeline.subject ? { subject: settings.pipeline.subject } : {}),
+    notch_hz: filter.notchHz,
+    band_low_hz: filter.bandLowHz,
+    band_high_hz: filter.bandHighHz,
+    order: filter.order,
+  }).then((payload) => ({
+    dataset: String(payload.dataset ?? ""),
+    subject: String(payload.subject ?? ""),
     sampleRateHz: Number(payload.sample_rate_hz) || 0,
-    samples: payload.samples ?? [],
-    markers: payload.markers ?? [],
-  };
+    seconds: Number(payload.seconds) || 0,
+    channels: Array.isArray(payload.channels) ? payload.channels.map(String) : [],
+    notchHz: Number(payload.notch_hz) || 0,
+    bandLowHz: Number(payload.band_low_hz) || 0,
+    bandHighHz: Number(payload.band_high_hz) || 0,
+    order: Number(payload.order) || 0,
+    raw: Array.isArray(payload.raw) ? (payload.raw as number[][]) : [],
+    filtered: Array.isArray(payload.filtered) ? (payload.filtered as number[][]) : [],
+  }));
 }
 
 export function pipelineOnlineStop(
@@ -183,7 +176,19 @@ export function pipelineOnlineStop(
   return postJson(settings.baseUrl, "/v1/online/stop", {});
 }
 
+export function pipelineOnlineMarker(
+  settings: PipelineSettings,
+  marker: { kind: string; code: string; label: string },
+): Promise<Record<string, unknown>> {
+  return postJson(settings.baseUrl, "/v1/online/marker", marker);
+}
+
 export function trialMarker(label: string, kind: "trial_start" | "trial_end") {
+  const code = label === "left" ? "T1" : label === "right" ? "T2" : "event";
+  return { kind, code, label };
+}
+
+export function imageryMarker(label: string, kind: "imagery_start" | "imagery_end") {
   const code = label === "left" ? "T1" : label === "right" ? "T2" : "event";
   return { kind, code, label };
 }

@@ -40,6 +40,12 @@
   color: var(--danger, #e7b2a8);
 }
 
+.help {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+  color: var(--muted, #a8a29e);
+}
+
 .row input,
 .row select {
   background: var(--bg, #1c1917);

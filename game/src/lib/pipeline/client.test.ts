@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { defaultSessionSettings } from "@/types/settings";
 
-import { pipelineRecordStart, trialMarker } from "./client";
+import { imageryMarker, pipelineRecordStart, trialMarker } from "./client";
 
 describe("pipeline client", () => {
   it("posts the session id to the record endpoint", async () => {
@@ -27,5 +27,18 @@ describe("pipeline client", () => {
       label: "left",
     });
     expect(trialMarker("right", "trial_end").code).toBe("T2");
+  });
+
+  it("marks the start and end of motor imagery", () => {
+    expect(imageryMarker("left", "imagery_start")).toEqual({
+      kind: "imagery_start",
+      code: "T1",
+      label: "left",
+    });
+    expect(imageryMarker("right", "imagery_end")).toEqual({
+      kind: "imagery_end",
+      code: "T2",
+      label: "right",
+    });
   });
 });

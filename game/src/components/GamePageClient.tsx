@@ -10,17 +10,19 @@ import { apiCreateSession } from "@/lib/api/client";
 import {
   pipelineOnlineStart,
   pipelineOnlineStop,
+  pipelinePreModelFilter,
   pipelineRecordStart,
   pipelineRecordStop,
+  type FilterPreview,
 } from "@/lib/pipeline/client";
 import { useHudStore } from "@/state/hud-store";
 import { usePersistenceStore } from "@/state/persistence-store";
 import { useSettingsStore } from "@/state/settings-store";
 
+import { FilterCharts } from "./FilterCharts";
 import { GameControls } from "./GameControls";
 import { SessionHUD } from "./SessionHUD";
 import { SettingsPanel, type SetupScreen } from "./SettingsPanel";
-import { SignalBackdrop } from "./SignalBackdrop";
 import styles from "./game-page.module.css";
 
 const PhaserGameContainer = dynamic(
@@ -31,7 +33,7 @@ const PhaserGameContainer = dynamic(
   { ssr: false },
 );
 
-type View = "setup" | "session";
+type View = "setup" | "session" | "charts";
 
 async function enterFullscreen(): Promise<void> {
   if (document.fullscreenElement) return;
@@ -65,10 +67,16 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   const sessionStatus = useHudStore((s) => s.sessionStatus);
   const [view, setView] = useState<View>("setup");
   const [starting, setStarting] = useState(false);
+  const [preview, setPreview] = useState<FilterPreview | null>(null);
+
+  useEffect(() => {
+    if (view !== "charts") return;
+    window.scrollTo(0, 0);
+  }, [view]);
 
   useEffect(() => {
     if (initialStep === "offline") setMode("offline");
-    if (initialStep === "simulator" || initialStep === "signal" || initialStep === "real") {
+    if (initialStep === "simulator" || initialStep === "real") {
       setMode("online");
       setNested("pipeline", {
         onlineSource: initialStep === "real" ? "cyton" : "simulator",
@@ -92,9 +100,7 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   const stop = () => {
     if (viewRef.current !== "session") return;
     showSession("setup");
-    if (initialStep !== "signal") {
-      bridge.dispatchCommand({ type: "STOP_SESSION" });
-    }
+    bridge.dispatchCommand({ type: "STOP_SESSION" });
     const st = useSettingsStore.getState().settings;
     const md = useSettingsStore.getState().mode;
     const finish =
@@ -132,13 +138,15 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     const md = useSettingsStore.getState().mode;
     setLastError(null);
     setStarting(true);
-    await enterFullscreen();
     try {
-      if (initialStep === "signal") {
-        await pipelineOnlineStart(st.pipeline);
-        showSession("session");
+      if (initialStep === "pre-model") {
+        const next = await pipelinePreModelFilter(st);
+        setPreview(next);
+        viewRef.current = "charts";
+        setView("charts");
         return;
       }
+      await enterFullscreen();
       const session = await apiCreateSession(md, st);
       sessionIdRef.current = session.id;
       if (md === "offline") {
@@ -166,13 +174,20 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     }
   };
 
-  if (view === "session" && initialStep === "signal") {
+  if (view === "charts" && preview) {
     return (
-      <div className={`${styles.session} ${styles.signalSession}`}>
-        <div className={styles.signalStage}>
-          <SignalBackdrop baseUrl={settings.pipeline.baseUrl} />
-        </div>
-        <p className={styles.stopHint}>Press space to stop</p>
+      <div className={styles.chartsView}>
+        <button
+          type="button"
+          className={styles.back}
+          onClick={() => {
+            viewRef.current = "setup";
+            setView("setup");
+          }}
+        >
+          Back
+        </button>
+        <FilterCharts preview={preview} />
       </div>
     );
   }
@@ -192,7 +207,11 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   return (
     <div className={styles.setup}>
       <SettingsPanel screen={initialStep} />
-      <GameControls onStart={start} starting={starting} />
+      <GameControls
+        onStart={start}
+        starting={starting}
+        label={initialStep === "pre-model" ? "Start pre model" : "Start session"}
+      />
       {lastError ? (
         <p className={styles.error} role="alert">
           {lastError}

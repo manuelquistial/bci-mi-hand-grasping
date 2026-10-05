@@ -5,9 +5,10 @@ import styles from "./game-controls.module.css";
 type Props = {
   onStart: () => void | Promise<void>;
   starting: boolean;
+  label?: string;
 };
 
-export function GameControls({ onStart, starting }: Props) {
+export function GameControls({ onStart, starting, label = "Start session" }: Props) {
   return (
     <div className={styles.buttons}>
       <button
@@ -16,7 +17,7 @@ export function GameControls({ onStart, starting }: Props) {
         onClick={() => void onStart()}
         disabled={starting}
       >
-        {starting ? "Starting…" : "Start session"}
+        {starting ? "Starting…" : label}
       </button>
     </div>
   );
