@@ -32,10 +32,10 @@ class DatasetMetadata:
 class BaseDatasetLoader(ABC):
     """
     Cargador abstracto de datasets EEG.
-    Cada implementación concreta sabe leer un formato (BCI IV 2a, PhysioNet, etc.).
+    Cada implementación concreta sabe leer un formato (Shuqfa 2024, Liu 2024, etc.).
     """
 
-    # Identificador corto para registro y detección (ej: "bci_iv2a")
+    # Identificador corto para registro y detección (ej: "shuqfa2024")
     id: str = "base"
     label: str = "Dataset"
 

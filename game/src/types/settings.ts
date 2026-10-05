@@ -92,7 +92,7 @@ export const defaultSessionSettings = (): SessionSettings => ({
   pipeline: {
     baseUrl: "http://127.0.0.1:8765",
     onlineSource: "simulator",
-    dataset: "bci_iv2a",
+    dataset: "shuqfa2024",
     sessionDir: "",
     subject: "",
   },

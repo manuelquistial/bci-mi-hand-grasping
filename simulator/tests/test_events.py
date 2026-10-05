@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from dataset_loaders.events import TrialEvent, load_events_csv, resolve_events
-from dataset_loaders import BCICompetitionIV2aLoader
+from dataset_loaders.shuqfa2024 import Shuqfa2024Loader
 
 from simopenbci.clock import InstantClock
 from simopenbci.config import PlaybackConfig
@@ -55,7 +55,10 @@ def test_resolve_events_sidecar(tmp_path: Path) -> None:
     assert events[0].code == "T1"
 
 
-def test_playback_emits_markers_at_sample_index(bci_sample: Path) -> None:
+def test_playback_emits_markers_at_sample_index(tmp_path: Path) -> None:
+    signal = tmp_path / "SUB_001_SIG_02.csv"
+    line = ",".join("0" for _ in range(8))
+    signal.write_text("\n".join(line for _ in range(3)) + "\n", encoding="utf-8")
     sink = RecordingSink()
     markers = RecordingMarkerSink()
     events = [
@@ -63,8 +66,8 @@ def test_playback_emits_markers_at_sample_index(bci_sample: Path) -> None:
         TrialEvent(2, "T1", "left", "trial_start"),
     ]
     count = PlaybackService().run(
-        loader=BCICompetitionIV2aLoader(),
-        file_path=bci_sample,
+        loader=Shuqfa2024Loader(n_channels=8),
+        file_path=signal,
         sink=sink,
         clock=InstantClock(),
         notifier=CapturingNotifier(),

@@ -151,14 +151,14 @@ def test_list_subjects_uses_the_injected_catalog(tmp_path: Path) -> None:
 def test_list_datasets_uses_the_injected_catalog(tmp_path: Path) -> None:
     service = PipelineService(
         tmp_path,
-        dataset_lister=lambda: [{"id": "bci_iv2a", "label": "BCI Competition IV 2a"}],
+        dataset_lister=lambda: [{"id": "shuqfa2024", "label": "Shuqfa 2024 curated PhysioNet"}],
     )
     listed = service.list_datasets()
     assert listed["datasets"] == [
         {
-            "id": "bci_iv2a",
-            "label": "BCI Competition IV 2a",
-            "dataset": "bci_iv2a",
+            "id": "shuqfa2024",
+            "label": "Shuqfa 2024 curated PhysioNet",
+            "dataset": "shuqfa2024",
             "sessionDir": "",
         }
     ]
@@ -175,11 +175,11 @@ def test_list_datasets_includes_offline_recordings(tmp_path: Path) -> None:
         tmp_path,
         dataset_lister=lambda: [
             {"id": "recorded_session", "label": "Recorded session"},
-            {"id": "bci_iv2a", "label": "BCI Competition IV 2a"},
+            {"id": "shuqfa2024", "label": "Shuqfa 2024 curated PhysioNet"},
         ],
     )
     listed = service.list_datasets()["datasets"]
-    assert [item["id"] for item in listed] == ["bci_iv2a", "recording:lab1"]
+    assert [item["id"] for item in listed] == ["shuqfa2024", "recording:lab1"]
     recording = listed[1]
     assert recording["dataset"] == "recorded_session"
     assert recording["sessionDir"] == str(session)
@@ -200,11 +200,11 @@ def test_online_start_launches_simulator_command(tmp_path: Path) -> None:
     started = service.start_online(
         source="simulator",
         lsl_name="OpenBCI_EEG",
-        dataset="bci_iv2a",
+        dataset="shuqfa2024",
         wait_seconds=0.1,
     )
     assert started["pid"] == 42
-    assert "bci_iv2a" in seen[0]
+    assert "shuqfa2024" in seen[0]
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline and service.status()["online"]["samples_seen"] < 2:
         time.sleep(0.02)
@@ -239,7 +239,7 @@ def test_online_signal_marks_where_each_trial_starts(tmp_path: Path) -> None:
         marker_opener=lambda **_: markers,
         process_starter=lambda command: _Proc(),  # type: ignore[return-value, arg-type]
     )
-    service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="bci_iv2a")
+    service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="shuqfa2024")
     deadline = time.monotonic() + 2
     seen: list[dict] = []
     while time.monotonic() < deadline:
@@ -265,8 +265,8 @@ def test_online_start_replaces_a_previous_run(tmp_path: Path) -> None:
         return _FakeReader([_chunk()], _cyton_summary())
 
     service = PipelineService(tmp_path, eeg_opener=opener, process_starter=starter)  # type: ignore[arg-type]
-    first = service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="bci_iv2a")
-    second = service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="bci_iv2a")
+    first = service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="shuqfa2024")
+    second = service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="shuqfa2024")
     assert first["pid"] == 40
     assert second["pid"] == 41
     assert launched[0].returncode == 0
@@ -291,7 +291,7 @@ def test_finished_simulator_releases_the_online_slot(tmp_path: Path) -> None:
         eeg_opener=opener,
         process_starter=lambda command: proc,  # type: ignore[return-value, arg-type]
     )
-    service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="bci_iv2a")
+    service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="shuqfa2024")
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline and service.status()["online"] is not None:
         time.sleep(0.02)

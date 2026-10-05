@@ -30,7 +30,7 @@ from .sinks.markers import LslMarkerSink
 SinkFactory = Callable[[], SampleSink]
 
 # Default dataset when starting without --file / --pick-file
-DEFAULT_DATASET = "bci_iv2a"
+DEFAULT_DATASET = "shuqfa2024"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -208,7 +208,7 @@ def run(
 
     if args.list_subjects:
         if not dataset_id:
-            print("Error: --list-subjects requires --dataset (e.g. bci_iv2a)")
+            print("Error: --list-subjects requires --dataset (e.g. shuqfa2024)")
             return 1
         root = data_root if data_root is not None else Path(args.data_root or ".")
         subjects = list_subjects_for_dataset(dataset_id, root)

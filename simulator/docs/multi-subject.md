@@ -4,25 +4,25 @@ Para que un dataset funcione con **todos los sujetos** desde línea de comandos 
 
 ## 1. `list_subjects(data_root)` → `list[SubjectRunInfo]`
 
-- **Entrada**: `data_root`, carpeta raíz del dataset (p. ej. `data/bci_iv2a`).
-- **Salida**: Lista de `SubjectRunInfo(subject_id="A01", runs=["T", "E"])` con todos los sujetos y los runs/sesiones disponibles.
+- **Entrada**: `data_root`, carpeta raíz del dataset (p. ej. `data/shuqfa2024`).
+- **Salida**: Lista de `SubjectRunInfo(subject_id="S001", runs=["01", "02"])` con todos los sujetos y los runs/sesiones disponibles.
 - **Uso**: Se llama con `--list-subjects` para mostrar la tabla de sujetos y runs.
 
 ## 2. `resolve_subject_file(data_root, subject_id, run=None)` → `Path | None`
 
-- **Entrada**: misma `data_root`, `subject_id` (ej. `"A03"`), y opcionalmente `run` (ej. `"T"`).
+- **Entrada**: misma `data_root`, `subject_id` (ej. `"S001"`), y opcionalmente `run` (ej. `"02"`).
 - **Salida**: Ruta del archivo a streamear para ese sujeto y run, o `None` si no existe.
-- **Uso**: Con `--subject A03 --run T` el simulador usa esta ruta en lugar de `--file`.
+- **Uso**: Con `--subject S001 --run 02` el simulador usa esta ruta en lugar de `--file`.
 
 ## 3. `default_data_root()` → `Path | None` (opcional)
 
-- Devuelve `data/<id>/` bajo el cwd (ej. `data/bci_iv2a`).
+- Devuelve `data/<id>/` bajo el cwd (ej. `data/shuqfa2024`).
 - Si se implementa, `--list-subjects` / `--subject` no requieren `--data-root`.
 
-## Convención de nombres (ejemplo BCI IV 2a)
+## Convención de nombres
 
-- Archivos: `{subject_id}{run}.txt` → `A01T.txt`, `A01E.txt`.
-- Para otro dataset puede usarse cualquier esquema (p. ej. `sujeto_01_sesion_entrenamiento.csv`); solo hay que implementar la lógica en `list_subjects` y `resolve_subject_file` de forma coherente.
+- Cada dataset elige su esquema. Shuqfa 2024 usa `SUB_001_SIG_02.csv`.
+- Solo hay que implementar `list_subjects` y `resolve_subject_file` de forma coherente con esos nombres.
 
 ## Ejemplo: añadir un dataset “OpenBMI” con sujetos
 

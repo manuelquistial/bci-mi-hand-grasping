@@ -6,54 +6,66 @@ from simopenbci.cli import run
 from simopenbci.sinks.recording import RecordingSink
 
 
+def _write_signal(folder: Path, *, rows: int = 3, channels: int = 64) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    line = ",".join(str(index) for index in range(channels))
+    (folder / "SUB_001_SIG_02.csv").write_text(
+        "\n".join(line for _ in range(rows)) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_list_datasets(capsys) -> None:
     code = run(["--list-datasets"])
     assert code == 0
     datasets = json.loads(capsys.readouterr().out)
     assert [item["id"] for item in datasets] == [
         "recorded_session",
-        "bci_iv2a",
         "liu2024_stroke",
         "shuqfa2024",
     ]
 
 
-def test_list_subjects_json(fixtures_dir: Path, capsys) -> None:
+def test_list_subjects_json(tmp_path: Path, capsys) -> None:
+    _write_signal(tmp_path)
     code = run(
         [
             "--dataset",
-            "bci_iv2a",
+            "shuqfa2024",
             "--list-subjects",
             "--json",
             "--data-root",
-            str(fixtures_dir / "bci_iv2a"),
+            str(tmp_path),
         ]
     )
     assert code == 0
     subjects = json.loads(capsys.readouterr().out)
-    assert subjects[0]["id"] == "A01"
+    assert subjects[0]["id"] == "S001"
+    assert "02" in subjects[0]["runs"]
 
 
-def test_list_subjects(fixtures_dir: Path):
+def test_list_subjects(tmp_path: Path):
+    _write_signal(tmp_path)
     code = run(
         [
             "--dataset",
-            "bci_iv2a",
+            "shuqfa2024",
             "--list-subjects",
             "--data-root",
-            str(fixtures_dir / "bci_iv2a"),
+            str(tmp_path),
         ]
     )
     assert code == 0
 
 
-def test_list_subjects_defaults_to_bci():
+def test_list_subjects_defaults_to_configured_dataset():
     """--list-subjects without --dataset uses DEFAULT_DATASET."""
     code = run(["--list-subjects"])
     assert code == 0
 
 
-def test_subject_resolution_and_playback(fixtures_dir: Path):
+def test_subject_resolution_and_playback(tmp_path: Path):
+    _write_signal(tmp_path, channels=8)
     sinks: list[RecordingSink] = []
 
     def factory() -> RecordingSink:
@@ -64,13 +76,13 @@ def test_subject_resolution_and_playback(fixtures_dir: Path):
     code = run(
         [
             "--dataset",
-            "bci_iv2a",
+            "shuqfa2024",
             "--data-root",
-            str(fixtures_dir / "bci_iv2a"),
+            str(tmp_path),
             "--subject",
-            "A01",
+            "S001",
             "--run",
-            "T",
+            "2",
             "--channels",
             "8",
             "--max-samples",
@@ -85,7 +97,9 @@ def test_subject_resolution_and_playback(fixtures_dir: Path):
     assert len(sinks[0].samples[0]) == 8
 
 
-def test_file_no_dialog(bci_sample: Path):
+def test_file_no_dialog(tmp_path: Path):
+    _write_signal(tmp_path, rows=3, channels=8)
+    signal = tmp_path / "SUB_001_SIG_02.csv"
     sinks: list[RecordingSink] = []
 
     def factory() -> RecordingSink:
@@ -96,9 +110,11 @@ def test_file_no_dialog(bci_sample: Path):
     code = run(
         [
             "--dataset",
-            "bci_iv2a",
+            "shuqfa2024",
             "--file",
-            str(bci_sample),
+            str(signal),
+            "--channels",
+            "8",
             "--max-samples",
             "10",
             "--no-dialog",
@@ -111,21 +127,15 @@ def test_file_no_dialog(bci_sample: Path):
 
 def test_no_dialog_without_file_or_dataset_data_fails(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    code = run(["--no-dialog", "--dataset", "bci_iv2a"])
+    code = run(["--no-dialog", "--dataset", "shuqfa2024"])
     assert code == 1
 
 
-def test_default_uses_first_bci_subject(monkeypatch, fixtures_dir: Path):
+def test_default_uses_first_shuqfa_subject(monkeypatch, tmp_path: Path):
     """Bare --no-dialog uses DEFAULT_DATASET first subject from data/<dataset>/."""
-    import tempfile
-    from pathlib import Path as P
-    import shutil
-
-    work = P(tempfile.mkdtemp())
-    sample = work / "data" / "bci_iv2a"
-    sample.mkdir(parents=True)
-    shutil.copy(fixtures_dir / "bci_iv2a" / "A01T.txt", sample / "A01T.txt")
-    monkeypatch.chdir(work)
+    sample = tmp_path / "data" / "shuqfa2024"
+    _write_signal(sample, rows=2)
+    monkeypatch.chdir(tmp_path)
 
     sinks: list[RecordingSink] = []
 
@@ -139,4 +149,4 @@ def test_default_uses_first_bci_subject(monkeypatch, fixtures_dir: Path):
     assert len(sinks) == 1
     assert len(sinks[0].samples) == 2
     assert sinks[0].metadata is not None
-    assert sinks[0].metadata.n_channels == 22
+    assert sinks[0].metadata.n_channels == 64

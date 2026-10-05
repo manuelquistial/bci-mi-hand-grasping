@@ -12,8 +12,8 @@ Más detalle por dataset y extensión: [`docs/`](docs/README.md).
 
 - **`simopenbci.PlaybackService`**: lee muestras con un loader y las empuja a un `SampleSink` con timing de reloj compensado.
 - **`simopenbci.cli`**: argparse y orquestación (misma CLI pública).
-- **`dataset_loaders`**: cargadores intercambiables (BCI Competition IV 2a, Shuqfa 2024, Liu 2024), con detección por ruta y multi-sujeto.
-- **Entrypoints**: `uv run simopenbci …` o `uv run python main.py …` (por defecto: primer sujeto BCI IV 2a).
+- **`dataset_loaders`**: cargadores intercambiables (Shuqfa 2024, Liu 2024), con detección por ruta y multi-sujeto.
+- **Entrypoints**: `uv run simopenbci …` o `uv run python main.py …` (por defecto: registro 02 del primer sujeto de Shuqfa 2024).
 
 ## Setup con uv
 
@@ -63,14 +63,6 @@ cp "$(brew --prefix lsl)"/lib/liblsl*.dylib "$PYTHON_SITE/pylsl/lib/"
 
 ## Datasets soportados
 
-### BCI Competition IV Dataset 2a
-
-- **Ruta**: `data/bci_iv2a/`.
-- **Sujetos**: A01–A09; **runs**: T (training), E (evaluation). Archivos: `A01T.txt`, `A01E.txt`, etc.
-- **Formato**: una línea por muestra; columna 0 = tiempo, columnas 1–22 = 22 canales EEG.
-- **Metadatos**: 22 canales, 250 Hz, stream `BCI_IV2a` (nombres de canal en el StreamInfo LSL).
-- Ver [`docs/bci-iv2a-dataset.md`](docs/bci-iv2a-dataset.md).
-
 ### Liu et al. 2024 (imaginación de agarre, ACV)
 
 - **Dataset**: 50 pacientes, 40 ensayos izquierda/derecha, 500 Hz.
@@ -110,7 +102,6 @@ sample_index,code,label,kind
 1840,T0,rest,rest
 ```
 
-- **BCI IV 2a**: generar el sidecar desde los eventos GDF (768/769–772) al exportar.
 - **Shuqfa 2024**: los marcadores salen del CSV de anotaciones del mismo registro.
 
 ```bash
@@ -133,7 +124,7 @@ Los demás datasets siguen en sus loaders.
 
 ## Uso por línea de comandos
 
-Sin argumentos, streamea el **primer sujeto** de BCI IV 2a desde `data/bci_iv2a/`:
+Sin argumentos, streamea el registro `02` del primer sujeto de Shuqfa 2024 desde `data/shuqfa2024/`:
 
 ```bash
 uv run simopenbci
@@ -146,11 +137,10 @@ uv run simopenbci --no-dialog
 uv run simopenbci --dataset shuqfa2024 --subject S001 --run 2 --no-dialog
 
 # Sujeto / run concreto
-uv run simopenbci --dataset bci_iv2a --subject A01 --run T --channels 8 --no-dialog
-uv run simopenbci --dataset bci_iv2a --subject A09 --run E --lsl-name OpenBCI_EEG --no-dialog
+uv run simopenbci --dataset liu2024_stroke --subject sub-01 --no-dialog
 
 # Listar sujetos
-uv run simopenbci --dataset bci_iv2a --list-subjects
+uv run simopenbci --dataset shuqfa2024 --list-subjects
 
 # Solo si quieres elegir un archivo a mano
 uv run simopenbci --pick-file
@@ -183,7 +173,7 @@ Los tests usan `RecordingSink` (sin LSL). El test de `LslSampleSink` se omite si
 ## Conexión con articulo_1
 
 ```bash
-uv run simopenbci --dataset bci_iv2a --file data/bci_iv2a/A01T.txt \
+uv run simopenbci --dataset shuqfa2024 --subject S001 --run 2 \
   --channels 8 --lsl-name OpenBCI_EEG --no-dialog
 ```
 
@@ -212,18 +202,15 @@ simulator/
 ├── dataset_loaders/           # Loaders extensibles
 │   ├── base.py
 │   ├── parsing.py             # Parseo CSV/TXT compartido
-│   ├── bci_competition_iv2a.py
 │   ├── liu2024_stroke_mi.py
 │   ├── shuqfa2024.py
 │   ├── edf.py
 │   └── generic_csv.py
 ├── data/                      # Datasets locales (gitignored): data/<id>/
-│   ├── bci_iv2a/
 │   ├── liu2024_stroke/
 │   └── shuqfa2024/
 ├── docs/                      # Guías (datasets, multi-sujeto)
 │   ├── README.md
-│   ├── bci-iv2a-dataset.md
 │   ├── liu2024-stroke-mi.md
 │   ├── shuqfa2024.md
 │   └── multi-subject.md

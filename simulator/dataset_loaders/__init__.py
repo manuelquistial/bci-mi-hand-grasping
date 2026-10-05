@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Type
 
 from .base import BaseDatasetLoader, DatasetMetadata, SubjectRunInfo
-from .bci_competition_iv2a import BCICompetitionIV2aLoader
 from .liu2024_stroke_mi import Liu2024StrokeMILoader
 from .recorded_session import RecordedSessionLoader
 from .shuqfa2024 import Shuqfa2024Loader
@@ -14,7 +13,6 @@ from .shuqfa2024 import Shuqfa2024Loader
 # Loaders disponibles (orden: más específico primero para auto-detección)
 LOADERS: list[Type[BaseDatasetLoader]] = [
     RecordedSessionLoader,
-    BCICompetitionIV2aLoader,
     Liu2024StrokeMILoader,
     Shuqfa2024Loader,
 ]
@@ -63,13 +61,13 @@ def create_loader(
 
 def get_loader_for_path(file_path: str | Path, **overrides: Any) -> BaseDatasetLoader:
     """
-    Devuelve el primer loader que detecte el path (p. ej. BCI_Competition_IV2a en la ruta).
+    Devuelve el primer loader que detecte el path.
     """
     return create_loader(file_path=file_path, **overrides)
 
 
 def get_loader_by_id(loader_id: str, **overrides: Any) -> BaseDatasetLoader | None:
-    """Obtiene una instancia del loader por id ('bci_iv2a', 'shuqfa2024')."""
+    """Obtiene una instancia del loader por id ('shuqfa2024', 'liu2024_stroke')."""
     if get_loader_class_by_id(loader_id) is None:
         return None
     return create_loader(dataset_id=loader_id, **overrides)
@@ -79,7 +77,7 @@ def list_subjects_for_dataset(
     dataset_id: str,
     data_root: str | Path,
 ) -> list[SubjectRunInfo]:
-    """Lista sujetos disponibles para un dataset (bci_iv2a, etc.)."""
+    """Lista sujetos disponibles para un dataset."""
     loader_cls = get_loader_class_by_id(dataset_id)
     if loader_cls is None:
         return []
@@ -105,7 +103,6 @@ __all__ = [
     "DatasetMetadata",
     "SubjectRunInfo",
     "RecordedSessionLoader",
-    "BCICompetitionIV2aLoader",
     "Liu2024StrokeMILoader",
     "Shuqfa2024Loader",
     "LOADERS",

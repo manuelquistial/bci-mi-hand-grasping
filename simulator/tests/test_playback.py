@@ -1,7 +1,7 @@
 """Tests for PlaybackService."""
 from pathlib import Path
 
-from dataset_loaders import BCICompetitionIV2aLoader
+from dataset_loaders.shuqfa2024 import Shuqfa2024Loader
 
 from simopenbci.clock import InstantClock
 from simopenbci.config import PlaybackConfig
@@ -26,12 +26,19 @@ class CapturingNotifier(ConsoleNotifier):
         self.progresses.append(message)
 
 
-def test_playback_records_all_samples(bci_sample: Path):
+def _signal(tmp_path: Path, rows: int = 3) -> Path:
+    path = tmp_path / "SUB_001_SIG_02.csv"
+    line = ",".join("0" for _ in range(8))
+    path.write_text("\n".join(line for _ in range(rows)) + "\n", encoding="utf-8")
+    return path
+
+
+def test_playback_records_all_samples(tmp_path: Path):
     sink = RecordingSink()
     notifier = CapturingNotifier()
     count = PlaybackService().run(
-        loader=BCICompetitionIV2aLoader(),
-        file_path=bci_sample,
+        loader=Shuqfa2024Loader(n_channels=8),
+        file_path=_signal(tmp_path),
         sink=sink,
         clock=InstantClock(),
         notifier=notifier,
@@ -44,11 +51,11 @@ def test_playback_records_all_samples(bci_sample: Path):
     assert "Samples sent: 3" in notifier.infos[0]
 
 
-def test_playback_max_samples(bci_sample: Path):
+def test_playback_max_samples(tmp_path: Path):
     sink = RecordingSink()
     count = PlaybackService().run(
-        loader=BCICompetitionIV2aLoader(),
-        file_path=bci_sample,
+        loader=Shuqfa2024Loader(n_channels=8),
+        file_path=_signal(tmp_path),
         sink=sink,
         clock=InstantClock(),
         notifier=CapturingNotifier(),
@@ -58,11 +65,11 @@ def test_playback_max_samples(bci_sample: Path):
     assert len(sink.samples) == 2
 
 
-def test_playback_stream_name_override(bci_sample: Path):
+def test_playback_stream_name_override(tmp_path: Path):
     sink = RecordingSink()
     PlaybackService().run(
-        loader=BCICompetitionIV2aLoader(),
-        file_path=bci_sample,
+        loader=Shuqfa2024Loader(n_channels=8),
+        file_path=_signal(tmp_path),
         sink=sink,
         clock=InstantClock(),
         notifier=CapturingNotifier(),

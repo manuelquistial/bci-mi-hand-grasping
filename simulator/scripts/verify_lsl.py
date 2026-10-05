@@ -17,7 +17,7 @@ def main() -> int:
     parser.add_argument(
         "--name",
         default=None,
-        help="Optional stream name filter (e.g. Shuqfa2024_EEG, BCI_IV2a)",
+        help="Optional stream name filter (e.g. Shuqfa2024_EEG, Liu2024_Stroke_MI)",
     )
     parser.add_argument(
         "--timeout",
