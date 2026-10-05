@@ -117,7 +117,13 @@ def test_record_start_stop_and_marker_over_http(tmp_path: Path) -> None:
             if status["recording"] and status["recording"]["samples"] >= 4:
                 break
             time.sleep(0.02)
+        signal = json.loads(urllib.request.urlopen(base + "/v1/signal").read())
+        assert signal["active"] is True
+        assert signal["channels"][0] == "Ch1"
+        assert signal["samples"][0] == [0.0, 8.0, 0.0, 8.0]
         stopped = _post(base + "/v1/record/stop", {})
+        idle = json.loads(urllib.request.urlopen(base + "/v1/signal").read())
+        assert idle["active"] is False
         assert stopped["stopped"] is True
         assert stopped["n_samples"] == 4
         recording = load_recording(stopped["path"])
@@ -127,6 +133,19 @@ def test_record_start_stop_and_marker_over_http(tmp_path: Path) -> None:
     finally:
         server.shutdown()
         thread.join(timeout=2)
+
+
+def test_list_subjects_uses_the_injected_catalog(tmp_path: Path) -> None:
+    service = PipelineService(
+        tmp_path,
+        subject_lister=lambda dataset: (
+            [{"id": "sub-01", "label": "sub-01"}] if dataset == "liu2024_stroke" else []
+        ),
+    )
+    assert service.list_subjects("liu2024_stroke")["subjects"] == [
+        {"id": "sub-01", "label": "sub-01"}
+    ]
+    assert service.list_subjects("recorded_session")["subjects"] == []
 
 
 def test_list_datasets_uses_the_injected_catalog(tmp_path: Path) -> None:
@@ -189,9 +208,48 @@ def test_online_start_launches_simulator_command(tmp_path: Path) -> None:
     deadline = time.monotonic() + 2
     while time.monotonic() < deadline and service.status()["online"]["samples_seen"] < 2:
         time.sleep(0.02)
+    assert service.signal()["active"] is True
+    assert service.signal()["samples"][0] == [0.0, 8.0]
     stopped = service.stop_online()
+    assert service.signal()["active"] is False
     assert stopped["stopped"] is True
     assert stopped["samples_seen"] >= 2
+
+
+def test_online_signal_marks_where_each_trial_starts(tmp_path: Path) -> None:
+    class _Markers:
+        def __init__(self) -> None:
+            self._chunks = [
+                SampleChunk(samples=[["trial_start:T1:left"]], timestamps=[1.0]),
+            ]
+            self.closed = False
+
+        def pull_chunk(self, timeout: float = 0.0, max_samples: int = 64) -> SampleChunk:
+            if self._chunks:
+                return self._chunks.pop(0)
+            return SampleChunk(samples=[], timestamps=[])
+
+        def close(self) -> None:
+            self.closed = True
+
+    markers = _Markers()
+    service = PipelineService(
+        tmp_path,
+        eeg_opener=lambda **_: _FakeReader([_chunk()], _cyton_summary()),
+        marker_opener=lambda **_: markers,
+        process_starter=lambda command: _Proc(),  # type: ignore[return-value, arg-type]
+    )
+    service.start_online(source="simulator", lsl_name="OpenBCI_EEG", dataset="bci_iv2a")
+    deadline = time.monotonic() + 2
+    seen: list[dict] = []
+    while time.monotonic() < deadline:
+        seen = service.signal().get("markers") or []
+        if seen:
+            break
+        time.sleep(0.02)
+    service.stop_online()
+    assert seen == [{"kind": "trial_start", "label": "left", "position": 0.0}]
+    assert markers.closed is True
 
 
 def test_online_start_replaces_a_previous_run(tmp_path: Path) -> None:

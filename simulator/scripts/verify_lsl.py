@@ -4,7 +4,7 @@ Usage (terminal 1 — leave running):
   uv run python scripts/verify_lsl.py
 
 Then (terminal 2):
-  uv run simopenbci --dataset physionet_eegbci --no-dialog
+  uv run simopenbci --dataset shuqfa2024 --subject S001 --run 2 --no-dialog
 """
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def main() -> int:
     parser.add_argument(
         "--name",
         default=None,
-        help="Optional stream name filter (e.g. PhysioNet_EEG, BCI_IV2a)",
+        help="Optional stream name filter (e.g. Shuqfa2024_EEG, BCI_IV2a)",
     )
     parser.add_argument(
         "--timeout",

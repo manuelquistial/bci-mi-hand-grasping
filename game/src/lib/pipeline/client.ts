@@ -85,6 +85,40 @@ export async function pipelineListDatasets(baseUrl: string): Promise<SimulatorDa
   }));
 }
 
+export type SimulatorSubject = {
+  id: string;
+  label: string;
+};
+
+export async function pipelineListSubjects(
+  baseUrl: string,
+  dataset: string,
+): Promise<SimulatorSubject[]> {
+  const url = `${baseUrl.replace(/\/$/, "")}/v1/subjects?dataset=${encodeURIComponent(dataset)}`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new Error(
+      `Pipeline is not reachable at ${baseUrl}. Start it with \`uv run pipeline serve\` inside pipeline/.`,
+    );
+  }
+  const text = await response.text();
+  const payload = text
+    ? (JSON.parse(text) as {
+        error?: string;
+        subjects?: Array<Partial<SimulatorSubject> & { id: string }>;
+      })
+    : {};
+  if (!response.ok) {
+    throw new Error(payload.error || `Pipeline responded ${response.status}`);
+  }
+  return (payload.subjects ?? []).map((item) => ({
+    id: item.id,
+    label: item.label || item.id,
+  }));
+}
+
 export function pipelineOnlineStart(
   settings: PipelineSettings,
 ): Promise<Record<string, unknown>> {
@@ -92,7 +126,55 @@ export function pipelineOnlineStart(
     source: settings.onlineSource,
     dataset: settings.dataset,
     session_dir: settings.sessionDir,
+    ...(settings.subject ? { subject: settings.subject } : {}),
   });
+}
+
+export type SignalMarker = {
+  kind: string;
+  label: string;
+  position: number;
+};
+
+export type PipelineSignal = {
+  active: boolean;
+  channels: string[];
+  sampleRateHz: number;
+  samples: number[][];
+  markers: SignalMarker[];
+};
+
+export async function pipelineSignal(baseUrl: string): Promise<PipelineSignal> {
+  const url = `${baseUrl.replace(/\/$/, "")}/v1/signal`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new Error(
+      `Pipeline is not reachable at ${baseUrl}. Start it with \`uv run pipeline serve\` inside pipeline/.`,
+    );
+  }
+  const text = await response.text();
+  const payload = text
+    ? (JSON.parse(text) as {
+        error?: string;
+        active?: boolean;
+        channels?: string[];
+        sample_rate_hz?: number;
+        samples?: number[][];
+        markers?: SignalMarker[];
+      })
+    : {};
+  if (!response.ok) {
+    throw new Error(payload.error || `Pipeline responded ${response.status}`);
+  }
+  return {
+    active: Boolean(payload.active),
+    channels: payload.channels ?? [],
+    sampleRateHz: Number(payload.sample_rate_hz) || 0,
+    samples: payload.samples ?? [],
+    markers: payload.markers ?? [],
+  };
 }
 
 export function pipelineOnlineStop(

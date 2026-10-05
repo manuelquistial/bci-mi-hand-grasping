@@ -48,5 +48,5 @@ yarn-error.log*
 *.sqlite
 *.sqlite3
 
-# Local EEG recordings (fixtures under tests/ stay tracked)
+# Local EEG datasets: simulator/data/<dataset_id>/
 simulator/data/

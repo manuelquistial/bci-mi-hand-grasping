@@ -50,6 +50,7 @@ export type SessionSettings = {
     onlineSource: "simulator" | "cyton";
     dataset: string;
     sessionDir: string;
+    subject: string;
   };
 };
 
@@ -93,6 +94,7 @@ export const defaultSessionSettings = (): SessionSettings => ({
     onlineSource: "simulator",
     dataset: "bci_iv2a",
     sessionDir: "",
+    subject: "",
   },
 });
 

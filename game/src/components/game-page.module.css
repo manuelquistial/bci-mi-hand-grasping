@@ -35,6 +35,29 @@
   height: 100%;
 }
 
+.signalStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.signal {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.signal canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.signalSession .stopHint {
+  position: relative;
+  z-index: 1;
+}
+
 .stopHint {
   margin: 0;
   text-align: center;

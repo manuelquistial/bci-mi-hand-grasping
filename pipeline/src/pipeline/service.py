@@ -14,9 +14,12 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
-from pipeline.cyton import validate_cyton_stream
+import numpy as np
+
+from pipeline.cyton import channel_labels_for, validate_cyton_stream
+from pipeline.live import LiveSignal, parse_marker_text
 from pipeline.models import StreamSummary
 from pipeline.recorder import SessionRecorder, open_session_writer
 from pipeline.session import SESSION_NAME, list_recordings, load_recording
@@ -40,6 +43,7 @@ def default_simulator_project() -> Path:
 # One simulator process publishes one stream. The name is not a user setting.
 SIMULATOR_LSL_NAME = "OpenBCI_EEG"
 DatasetLister = Callable[[], list[dict[str, str]]]
+SubjectLister = Callable[[str], list[dict[str, str]]]
 
 
 def query_simulator_datasets(simulator_project: Path) -> list[dict[str, str]]:
@@ -74,6 +78,41 @@ def query_simulator_datasets(simulator_project: Path) -> list[dict[str, str]]:
     return datasets
 
 
+def query_simulator_subjects(simulator_project: Path, dataset: str) -> list[dict[str, str]]:
+    """Ask the simulator which participants a dataset can play."""
+    completed = subprocess.run(
+        [
+            "uv",
+            "run",
+            "--project",
+            str(simulator_project),
+            "simopenbci",
+            "--dataset",
+            dataset,
+            "--list-subjects",
+            "--json",
+        ],
+        cwd=simulator_project,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "simulator exited").strip()
+        last = detail.splitlines()[-1] if detail else "Could not list subjects"
+        raise RuntimeError(last)
+    data = json.loads(completed.stdout or "[]")
+    if not isinstance(data, list):
+        raise RuntimeError("subject list must be a JSON array")
+    subjects: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        subjects.append({"id": str(item["id"]), "label": str(item.get("label") or item["id"])})
+    return subjects
+
+
 def lsl_clock() -> float:
     """LSL clock when pylsl is available, otherwise the wall clock."""
     try:
@@ -82,6 +121,19 @@ def lsl_clock() -> float:
         return float(local_clock())
     except Exception:
         return time.time()
+
+
+def open_marker_stream(*, eeg_name: str, wait_seconds: float) -> Any | None:
+    """Markers inlet paired with the EEG stream, if one is published."""
+    from pipeline.reader import LslStreamReader
+
+    try:
+        return LslStreamReader.open(
+            name=f"{eeg_name}_Markers",
+            wait_seconds=wait_seconds,
+        )
+    except TimeoutError:
+        return None
 
 
 def open_eeg_stream(*, stream_name: str | None, wait_seconds: float) -> Any:
@@ -166,19 +218,24 @@ class PipelineService:
         recordings_root: Path,
         *,
         eeg_opener: StreamOpener | None = None,
+        marker_opener: Callable[..., Any] | None = None,
         clock: Callable[[], float] | None = None,
         simulator_project: Path | None = None,
         process_starter: ProcessStarter | None = None,
         dataset_lister: DatasetLister | None = None,
+        subject_lister: SubjectLister | None = None,
     ) -> None:
         self.recordings_root = Path(recordings_root)
         self.recordings_root.mkdir(parents=True, exist_ok=True)
         self._eeg_opener = eeg_opener or open_eeg_stream
+        self._marker_opener = open_marker_stream if marker_opener is None and eeg_opener is None else marker_opener
         self._clock = clock or lsl_clock
         self._simulator_project = Path(simulator_project or default_simulator_project())
         self._process_starter = process_starter or start_simulator_process
         self._dataset_lister = dataset_lister
+        self._subject_lister = subject_lister
         self._datasets: list[dict[str, str]] | None = None
+        self._subjects: dict[str, list[dict[str, str]]] = {}
         self._lock = threading.Lock()
         self._starting = False
         self._recorder: SessionRecorder | None = None
@@ -189,6 +246,7 @@ class PipelineService:
         self._online_samples = 0
         self._online_error: str | None = None
         self._online_source: str | None = None
+        self._live = LiveSignal()
 
     def list_datasets(self) -> dict[str, Any]:
         if self._datasets is None:
@@ -208,6 +266,18 @@ class PipelineService:
         ]
         datasets.extend(self._recording_options())
         return {"datasets": datasets}
+
+    def list_subjects(self, dataset: str) -> dict[str, Any]:
+        if not dataset or dataset == "recorded_session":
+            return {"subjects": []}
+        cached = self._subjects.get(dataset)
+        if cached is None:
+            lister = self._subject_lister or (
+                lambda dataset_id: query_simulator_subjects(self._simulator_project, dataset_id)
+            )
+            cached = lister(dataset)
+            self._subjects[dataset] = cached
+        return {"subjects": cached}
 
     def _recording_options(self) -> list[dict[str, str]]:
         options: list[dict[str, str]] = []
@@ -230,6 +300,10 @@ class PipelineService:
             )
         return options
 
+    def signal(self) -> dict[str, Any]:
+        """Latest EEG window for the game session background."""
+        return self._live.snapshot()
+
     def start_recording(
         self,
         session_id: str,
@@ -251,9 +325,20 @@ class PipelineService:
             summary: StreamSummary = reader.summary
             validate_cyton_stream(summary)
             writer = open_session_writer(root, reader)
-            recorder = SessionRecorder(reader, writer, clock=self._clock)
+            self._live.configure(
+                summary.channel_count,
+                summary.nominal_srate,
+                channel_labels_for(summary),
+            )
+            recorder = SessionRecorder(
+                reader,
+                writer,
+                clock=self._clock,
+                on_samples=self._live.append,
+            )
             recorder.start()
         except Exception:
+            self._live.close()
             if reader is not None:
                 reader.close()
             with self._lock:
@@ -286,6 +371,7 @@ class PipelineService:
             recorder = self._recorder
             self._recorder = None
             self._session_id = None
+        self._live.close()
         if recorder is None:
             return {"stopped": False}
         path = recorder.stop()
@@ -374,6 +460,7 @@ class PipelineService:
                 proc.kill()
         if listener is not None:
             listener.join(timeout=2)
+        self._live.close()
         with self._lock:
             samples = self._online_samples
             error = self._online_error
@@ -409,8 +496,18 @@ class PipelineService:
             }
         return {"recording": recording, "online": online}
 
+    def _ingest_markers(self, reader: Any) -> None:
+        chunk = reader.pull_chunk(timeout=0.0, max_samples=64)
+        for sample, timestamp in zip(chunk.samples, chunk.timestamps):
+            raw = sample[0] if sample else ""
+            if not isinstance(raw, str):
+                raw = str(raw)
+            kind, label = parse_marker_text(raw)
+            self._live.add_marker(float(timestamp), kind, label)
+
     def _listen(self, stream_name: str | None, require_cyton: bool, wait_seconds: float) -> None:
         reader = None
+        marker_reader = None
         deadline = time.monotonic() + wait_seconds
         last_error = "No LSL stream"
         try:
@@ -434,9 +531,28 @@ class PipelineService:
                 return
             if require_cyton:
                 validate_cyton_stream(reader.summary)
+            self._live.configure(
+                reader.summary.channel_count,
+                reader.summary.nominal_srate,
+                channel_labels_for(reader.summary),
+            )
+            if self._marker_opener is not None:
+                try:
+                    marker_reader = self._marker_opener(
+                        eeg_name=reader.summary.name,
+                        wait_seconds=min(1.0, wait_seconds),
+                    )
+                except (TimeoutError, OSError):
+                    marker_reader = None
             while self._online_stop is not None and not self._online_stop.is_set():
+                if marker_reader is not None:
+                    self._ingest_markers(marker_reader)
                 chunk = reader.pull_chunk(timeout=0.1, max_samples=2048)
                 if chunk.samples:
+                    self._live.append(
+                        np.asarray(chunk.samples, dtype=np.float64),
+                        chunk.timestamps,
+                    )
                     with self._lock:
                         self._online_samples += len(chunk.samples)
                     continue
@@ -447,6 +563,8 @@ class PipelineService:
             with self._lock:
                 self._online_error = str(exc)
         finally:
+            if marker_reader is not None:
+                marker_reader.close()
             if reader is not None:
                 reader.close()
             self._finish_listener()
@@ -498,9 +616,19 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
             if path == "/v1/status":
                 self._send(200, service.status())
                 return
+            if path == "/v1/signal":
+                self._send(200, service.signal())
+                return
             if path == "/v1/datasets":
                 try:
                     self._send(200, service.list_datasets())
+                except (RuntimeError, OSError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+                    self._send(400, {"error": str(exc)})
+                return
+            if path == "/v1/subjects":
+                dataset = (parse_qs(urlparse(self.path).query).get("dataset") or [""])[0]
+                try:
+                    self._send(200, service.list_subjects(dataset))
                 except (RuntimeError, OSError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
                     self._send(400, {"error": str(exc)})
                 return

@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "The Collector",
+  title: "BCI",
   description:
     "Experimental visual-feedback platform for motor imagery BCI (offline cueing & online control).",
 };

@@ -34,11 +34,13 @@ class SessionRecorder:
         *,
         clock: Clock,
         pull_timeout: float = 0.05,
+        on_samples: Callable[[np.ndarray], None] | None = None,
     ) -> None:
         self.reader = reader
         self.writer = writer
         self._clock = clock
         self._pull_timeout = pull_timeout
+        self._on_samples = on_samples
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
@@ -79,6 +81,8 @@ class SessionRecorder:
             return
         array = np.asarray(chunk.samples, dtype=np.float64)
         self.writer.append_samples(array, chunk.timestamps)
+        if self._on_samples is not None:
+            self._on_samples(array)
 
 
 def open_session_writer(root: Path, reader: ChunkSource) -> SessionWriter:

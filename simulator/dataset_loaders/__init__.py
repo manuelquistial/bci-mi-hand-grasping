@@ -7,16 +7,16 @@ from typing import Any, Type
 
 from .base import BaseDatasetLoader, DatasetMetadata, SubjectRunInfo
 from .bci_competition_iv2a import BCICompetitionIV2aLoader
-from .generic_csv import GenericCSVLoader
-from .physionet_eegbci import PhysioNetEEGBCILoader
+from .liu2024_stroke_mi import Liu2024StrokeMILoader
 from .recorded_session import RecordedSessionLoader
+from .shuqfa2024 import Shuqfa2024Loader
 
 # Loaders disponibles (orden: más específico primero para auto-detección)
 LOADERS: list[Type[BaseDatasetLoader]] = [
     RecordedSessionLoader,
     BCICompetitionIV2aLoader,
-    PhysioNetEEGBCILoader,
-    GenericCSVLoader,
+    Liu2024StrokeMILoader,
+    Shuqfa2024Loader,
 ]
 
 DATASET_IDS = tuple(L.id for L in LOADERS)
@@ -43,7 +43,6 @@ def create_loader(
     - If dataset_id is set, instantiate that loader with overrides
       (n_channels, sampling_rate, stream_name, ...).
     - Else if file_path is set, auto-detect from path (overrides applied).
-    - Else return GenericCSVLoader with overrides.
     """
     cls: Type[BaseDatasetLoader]
     if dataset_id:
@@ -53,25 +52,24 @@ def create_loader(
         cls = found
     elif file_path is not None:
         path = Path(file_path)
-        cls = next(
-            (L for L in LOADERS if L.detect_from_path(path)),
-            GenericCSVLoader,
-        )
+        found = next((L for L in LOADERS if L.detect_from_path(path)), None)
+        if found is None:
+            raise ValueError(f"No dataset loader matches {path}")
+        cls = found
     else:
-        cls = GenericCSVLoader
+        raise ValueError("dataset_id or file_path is required")
     return cls(**overrides) if overrides else cls()
 
 
 def get_loader_for_path(file_path: str | Path, **overrides: Any) -> BaseDatasetLoader:
     """
     Devuelve el primer loader que detecte el path (p. ej. BCI_Competition_IV2a en la ruta).
-    Si ninguno aplica, devuelve el loader genérico por defecto.
     """
     return create_loader(file_path=file_path, **overrides)
 
 
 def get_loader_by_id(loader_id: str, **overrides: Any) -> BaseDatasetLoader | None:
-    """Obtiene una instancia del loader por id ('bci_iv2a', 'generic_csv')."""
+    """Obtiene una instancia del loader por id ('bci_iv2a', 'shuqfa2024')."""
     if get_loader_class_by_id(loader_id) is None:
         return None
     return create_loader(dataset_id=loader_id, **overrides)
@@ -108,8 +106,8 @@ __all__ = [
     "SubjectRunInfo",
     "RecordedSessionLoader",
     "BCICompetitionIV2aLoader",
-    "PhysioNetEEGBCILoader",
-    "GenericCSVLoader",
+    "Liu2024StrokeMILoader",
+    "Shuqfa2024Loader",
     "LOADERS",
     "DATASET_IDS",
     "list_datasets",

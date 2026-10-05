@@ -1,16 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   pipelineListDatasets,
+  pipelineListSubjects,
   type SimulatorDataset,
+  type SimulatorSubject,
 } from "@/lib/pipeline/client";
 import { useSettingsStore } from "@/state/settings-store";
 
 import styles from "./settings-panel.module.css";
 
-export type SetupScreen = "offline" | "simulator" | "real";
+export type SetupScreen = "offline" | "simulator" | "signal" | "real";
 
 function selectedDatasetId(
   datasets: SimulatorDataset[],
@@ -28,12 +30,22 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
   const settings = useSettingsStore((s) => s.settings);
   const setNested = useSettingsStore((s) => s.setNested);
   const title =
-    screen === "offline" ? "Offline" : screen === "simulator" ? "Simulator" : "Real";
+    screen === "offline"
+      ? "Offline"
+      : screen === "simulator"
+        ? "Simulator"
+        : screen === "signal"
+          ? "Online simulated signal"
+          : "Real";
+  const showsDataset = screen === "simulator" || screen === "signal";
   const [datasets, setDatasets] = useState<SimulatorDataset[]>([]);
   const [datasetError, setDatasetError] = useState<string | null>(null);
+  const [subjects, setSubjects] = useState<SimulatorSubject[]>([]);
+  const [subjectError, setSubjectError] = useState<string | null>(null);
+  const subjectsDataset = useRef(settings.pipeline.dataset);
 
   useEffect(() => {
-    if (screen !== "simulator") return;
+    if (screen !== "simulator" && screen !== "signal") return;
     let cancelled = false;
     const baseUrl = useSettingsStore.getState().settings.pipeline.baseUrl;
     pipelineListDatasets(baseUrl)
@@ -55,6 +67,45 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
     };
   }, [screen, setNested]);
 
+  useEffect(() => {
+    if (screen !== "signal") return;
+    const dataset = settings.pipeline.dataset;
+    const datasetChanged = subjectsDataset.current !== dataset;
+    subjectsDataset.current = dataset;
+    if (!dataset || dataset === "recorded_session") {
+      setSubjects([]);
+      setSubjectError(null);
+      if (useSettingsStore.getState().settings.pipeline.subject) {
+        setNested("pipeline", { subject: "" });
+      }
+      return;
+    }
+    if (datasetChanged) {
+      setSubjects([]);
+      setSubjectError(null);
+      setNested("pipeline", { subject: "" });
+    }
+    let cancelled = false;
+    pipelineListSubjects(settings.pipeline.baseUrl, dataset)
+      .then((listed) => {
+        if (cancelled) return;
+        setSubjects(listed);
+        setSubjectError(null);
+        const current = useSettingsStore.getState().settings.pipeline.subject;
+        if (listed.length > 0 && !listed.some((item) => item.id === current)) {
+          setNested("pipeline", { subject: listed[0].id });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setSubjects([]);
+        setSubjectError(error instanceof Error ? error.message : "Could not load participants");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [screen, settings.pipeline.baseUrl, settings.pipeline.dataset, setNested]);
+
   return (
     <section className={styles.panel} aria-labelledby="settings-heading">
       <h2 id="settings-heading" className={styles.title}>
@@ -71,7 +122,7 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
             onChange={(e) => setNested("pipeline", { baseUrl: e.target.value })}
           />
         </label>
-        {screen === "simulator" ? (
+        {showsDataset ? (
           <>
             <label className={styles.row}>
               Dataset
@@ -98,11 +149,29 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
               </select>
             </label>
             {datasetError ? <p className={styles.note}>{datasetError}</p> : null}
+            {screen === "signal" && subjects.length > 0 ? (
+              <label className={styles.row}>
+                Participant
+                <select
+                  value={settings.pipeline.subject}
+                  onChange={(e) => setNested("pipeline", { subject: e.target.value })}
+                >
+                  {subjects.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            {screen === "signal" && subjectError ? (
+              <p className={styles.note}>{subjectError}</p>
+            ) : null}
           </>
         ) : null}
       </fieldset>
 
-      {screen === "simulator" ? null : (
+      {showsDataset ? null : (
       <>
       <fieldset className={styles.fieldset}>
         <legend>Timings (ms)</legend>

@@ -11,7 +11,7 @@ import re
 from pathlib import Path
 from typing import Iterator
 
-from .base import BaseDatasetLoader, DatasetMetadata, SubjectRunInfo
+from .base import BaseDatasetLoader, DatasetMetadata, SubjectRunInfo, standard_data_root
 from .parsing import iter_float_rows
 
 
@@ -65,18 +65,13 @@ class BCICompetitionIV2aLoader(BaseDatasetLoader):
     def detect_from_path(cls, file_path: str | Path) -> bool:
         path = Path(file_path).resolve()
         path_str = path.as_posix()
+        if "bci_iv2a" in {part.lower() for part in path.parts}:
+            return True
         return "BCI_Competition_IV2a" in path_str or "BCI_Competition_IV2A" in path_str
 
     @classmethod
     def default_data_root(cls) -> Path | None:
-        candidates = [
-            Path.cwd() / "data" / "sujetos_BCI_Competition_IV2a",
-            Path.cwd() / "sample_data" / "bci_iv2a",
-        ]
-        for path in candidates:
-            if path.is_dir():
-                return path
-        return candidates[0]
+        return standard_data_root(cls.id)
 
     # BCI IV 2a: archivos {subject_id}{run}.txt (ej. A01T.txt, A01E.txt)
     _FILE_PATTERN = re.compile(r"^([A-Za-z0-9]+)([A-Za-z])\.txt$", re.IGNORECASE)

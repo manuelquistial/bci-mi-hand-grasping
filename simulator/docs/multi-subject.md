@@ -4,7 +4,7 @@ Para que un dataset funcione con **todos los sujetos** desde línea de comandos 
 
 ## 1. `list_subjects(data_root)` → `list[SubjectRunInfo]`
 
-- **Entrada**: `data_root`, carpeta raíz del dataset (p. ej. `data/sujetos_BCI_Competition_IV2a`).
+- **Entrada**: `data_root`, carpeta raíz del dataset (p. ej. `data/bci_iv2a`).
 - **Salida**: Lista de `SubjectRunInfo(subject_id="A01", runs=["T", "E"])` con todos los sujetos y los runs/sesiones disponibles.
 - **Uso**: Se llama con `--list-subjects` para mostrar la tabla de sujetos y runs.
 
@@ -16,7 +16,7 @@ Para que un dataset funcione con **todos los sujetos** desde línea de comandos 
 
 ## 3. `default_data_root()` → `Path | None` (opcional)
 
-- Devuelve la carpeta por defecto bajo el cwd (ej. `data/sujetos_BCI_Competition_IV2a`).
+- Devuelve `data/<id>/` bajo el cwd (ej. `data/bci_iv2a`).
 - Si se implementa, `--list-subjects` / `--subject` no requieren `--data-root`.
 
 ## Convención de nombres (ejemplo BCI IV 2a)

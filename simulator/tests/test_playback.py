@@ -1,7 +1,7 @@
 """Tests for PlaybackService."""
 from pathlib import Path
 
-from dataset_loaders import GenericCSVLoader
+from dataset_loaders import BCICompetitionIV2aLoader
 
 from simopenbci.clock import InstantClock
 from simopenbci.config import PlaybackConfig
@@ -26,12 +26,12 @@ class CapturingNotifier(ConsoleNotifier):
         self.progresses.append(message)
 
 
-def test_playback_records_all_samples(generic_sample: Path):
+def test_playback_records_all_samples(bci_sample: Path):
     sink = RecordingSink()
     notifier = CapturingNotifier()
     count = PlaybackService().run(
-        loader=GenericCSVLoader(),
-        file_path=generic_sample,
+        loader=BCICompetitionIV2aLoader(),
+        file_path=bci_sample,
         sink=sink,
         clock=InstantClock(),
         notifier=notifier,
@@ -44,11 +44,11 @@ def test_playback_records_all_samples(generic_sample: Path):
     assert "Samples sent: 3" in notifier.infos[0]
 
 
-def test_playback_max_samples(generic_sample: Path):
+def test_playback_max_samples(bci_sample: Path):
     sink = RecordingSink()
     count = PlaybackService().run(
-        loader=GenericCSVLoader(),
-        file_path=generic_sample,
+        loader=BCICompetitionIV2aLoader(),
+        file_path=bci_sample,
         sink=sink,
         clock=InstantClock(),
         notifier=CapturingNotifier(),
@@ -58,11 +58,11 @@ def test_playback_max_samples(generic_sample: Path):
     assert len(sink.samples) == 2
 
 
-def test_playback_stream_name_override(generic_sample: Path):
+def test_playback_stream_name_override(bci_sample: Path):
     sink = RecordingSink()
     PlaybackService().run(
-        loader=GenericCSVLoader(),
-        file_path=generic_sample,
+        loader=BCICompetitionIV2aLoader(),
+        file_path=bci_sample,
         sink=sink,
         clock=InstantClock(),
         notifier=CapturingNotifier(),

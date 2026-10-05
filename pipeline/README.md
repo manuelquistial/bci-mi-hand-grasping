@@ -89,11 +89,13 @@ El simulador no escribe esa carpeta. La lee con `--dataset recorded_session --fi
 | POST | `/v1/record/marker` | Anota un trial (`kind`, `code`, `label`) |
 | POST | `/v1/record/stop` | Cierra la carpeta |
 | GET | `/v1/datasets` | Datasets que el simulador puede reproducir |
+| GET | `/v1/subjects?dataset=` | Participantes de ese dataset |
 | POST | `/v1/online/start` | Arranca el simulador o escucha la Cyton |
 | POST | `/v1/online/stop` | Detiene la corrida online |
+| GET | `/v1/signal` | Últimos segundos de EEG para dibujarlos en el game |
 | GET | `/v1/status` | Muestras grabadas o vistas |
 
-El procesamiento de la señal (filtros, características, clasificador) queda pendiente. Online hoy cuenta las muestras que llegan por el mismo inlet.
+El procesamiento de la señal (filtros, características, clasificador) queda pendiente. Mientras hay una sesión, `GET /v1/signal` entrega la ventana reciente para que el game la dibuje de fondo.
 
 ### API Python
 

@@ -19,5 +19,5 @@ htmlcov/
 .vscode/
 *.swp
 
-# Local EEG data (keep fixtures under tests/)
+# Local EEG datasets. One root: data/<dataset_id>/
 data/

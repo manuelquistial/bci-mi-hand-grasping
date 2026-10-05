@@ -20,6 +20,7 @@ import { useSettingsStore } from "@/state/settings-store";
 import { GameControls } from "./GameControls";
 import { SessionHUD } from "./SessionHUD";
 import { SettingsPanel, type SetupScreen } from "./SettingsPanel";
+import { SignalBackdrop } from "./SignalBackdrop";
 import styles from "./game-page.module.css";
 
 const PhaserGameContainer = dynamic(
@@ -67,10 +68,10 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
 
   useEffect(() => {
     if (initialStep === "offline") setMode("offline");
-    if (initialStep === "simulator" || initialStep === "real") {
+    if (initialStep === "simulator" || initialStep === "signal" || initialStep === "real") {
       setMode("online");
       setNested("pipeline", {
-        onlineSource: initialStep === "simulator" ? "simulator" : "cyton",
+        onlineSource: initialStep === "real" ? "cyton" : "simulator",
       });
     }
   }, [initialStep, setMode, setNested]);
@@ -91,7 +92,9 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   const stop = () => {
     if (viewRef.current !== "session") return;
     showSession("setup");
-    bridge.dispatchCommand({ type: "STOP_SESSION" });
+    if (initialStep !== "signal") {
+      bridge.dispatchCommand({ type: "STOP_SESSION" });
+    }
     const st = useSettingsStore.getState().settings;
     const md = useSettingsStore.getState().mode;
     const finish =
@@ -131,6 +134,11 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     setStarting(true);
     await enterFullscreen();
     try {
+      if (initialStep === "signal") {
+        await pipelineOnlineStart(st.pipeline);
+        showSession("session");
+        return;
+      }
       const session = await apiCreateSession(md, st);
       sessionIdRef.current = session.id;
       if (md === "offline") {
@@ -157,6 +165,17 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
       setStarting(false);
     }
   };
+
+  if (view === "session" && initialStep === "signal") {
+    return (
+      <div className={`${styles.session} ${styles.signalSession}`}>
+        <div className={styles.signalStage}>
+          <SignalBackdrop baseUrl={settings.pipeline.baseUrl} />
+        </div>
+        <p className={styles.stopHint}>Press space to stop</p>
+      </div>
+    );
+  }
 
   if (view === "session") {
     return (

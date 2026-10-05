@@ -5,7 +5,7 @@ import { GamePageClient } from "@/components/GamePageClient";
 
 import styles from "./game.module.css";
 
-const steps = ["offline", "simulator", "real"] as const;
+const steps = ["offline", "simulator", "signal", "real"] as const;
 
 type Step = (typeof steps)[number];
 

@@ -13,11 +13,13 @@ def test_iter_float_rows_skips_comments_and_bad_values(generic_sample: Path):
     assert rows[2][0] == 12.6
 
 
-def test_iter_float_rows_start_col_zero(physionet_sample: Path):
+def test_iter_float_rows_start_col_zero(tmp_path: Path):
+    sample = tmp_path / "rows.txt"
+    sample.write_text("0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8\n", encoding="utf-8")
     rows = list(
-        iter_float_rows(physionet_sample, n_channels=8, start_col=0, comment_prefix="%")
+        iter_float_rows(sample, n_channels=8, start_col=0, comment_prefix="%")
     )
-    assert len(rows) == 3
+    assert len(rows) == 1
     assert rows[0][0] == 0.1
 
 

@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "SimOpenBCI: stream EEG data from a dataset to LSL. "
             f"With no args, streams the first subject of {DEFAULT_DATASET} "
-            "(sample_data/ or data/)."
+            "(data/<dataset>/)."
         ),
     )
     parser.add_argument(
@@ -103,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--list-subjects",
         action="store_true",
         help="List available subjects and runs for the dataset, then exit.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="With --list-subjects, print subjects as JSON.",
     )
     parser.add_argument(
         "--list-datasets",
@@ -207,6 +212,16 @@ def run(
             return 1
         root = data_root if data_root is not None else Path(args.data_root or ".")
         subjects = list_subjects_for_dataset(dataset_id, root)
+        if args.json:
+            print(
+                json.dumps(
+                    [
+                        {"id": s.subject_id, "label": s.subject_id, "runs": s.runs}
+                        for s in subjects
+                    ]
+                )
+            )
+            return 0
         if not subjects:
             print(
                 f"No subjects found in {root} (or dataset does not support multi-subject)."
@@ -234,7 +249,7 @@ def run(
             _resolve_file_from_subject(dataset_id, data_root, args.subject, args.run)
         )
     elif not file_path and not args.pick_file and dataset_id and data_root is not None:
-        # Default start: first subject of the dataset (sample_data/ or data/)
+        # Default start: first subject under data/<dataset>/.
         resolved = _first_subject_file(dataset_id, data_root)
         if resolved is not None:
             subjects = list_subjects_for_dataset(dataset_id, data_root)
@@ -258,7 +273,7 @@ def run(
         else:
             hint = (
                 f"No dataset files found for {dataset_id!r} in {data_root}. "
-                "Put data under sample_data/ or data/, or pass --subject/--file, "
+                "Put files in data/<dataset>/, or pass --subject/--file, "
                 "or use --pick-file."
             )
             notifier.error(hint)
@@ -266,10 +281,14 @@ def run(
 
     overrides = _build_loader_overrides(args.channels, args.lsl_name)
     loader: BaseDatasetLoader
-    if dataset_id:
-        loader = create_loader(dataset_id=dataset_id, **overrides)
-    else:
-        loader = create_loader(file_path=file_path, **overrides)
+    try:
+        if dataset_id:
+            loader = create_loader(dataset_id=dataset_id, **overrides)
+        else:
+            loader = create_loader(file_path=file_path, **overrides)
+    except ValueError as exc:
+        notifier.error(str(exc))
+        return 1
 
     bind = getattr(loader, "bind", None)
     if callable(bind):

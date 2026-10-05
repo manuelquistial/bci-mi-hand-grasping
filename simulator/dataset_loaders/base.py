@@ -32,10 +32,10 @@ class DatasetMetadata:
 class BaseDatasetLoader(ABC):
     """
     Cargador abstracto de datasets EEG.
-    Cada implementación concreta sabe leer un formato (BCI IV 2a, CSV genérico, etc.).
+    Cada implementación concreta sabe leer un formato (BCI IV 2a, PhysioNet, etc.).
     """
 
-    # Identificador corto para registro y detección (ej: "bci_iv2a", "generic_csv")
+    # Identificador corto para registro y detección (ej: "bci_iv2a")
     id: str = "base"
     label: str = "Dataset"
 
@@ -74,6 +74,11 @@ class BaseDatasetLoader(ABC):
         Override in multi-subject loaders. Returns None if not applicable.
         """
         return None
+
+
+def standard_data_root(dataset_id: str) -> Path:
+    """On-disk root for a dataset: ``data/<dataset_id>/`` under the working directory."""
+    return Path.cwd() / "data" / dataset_id
 
     # -------------------------------------------------------------------------
     # Multi-subject datasets (opcional; override en loaders con varios sujetos)

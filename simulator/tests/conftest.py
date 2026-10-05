@@ -16,10 +16,5 @@ def bci_sample(fixtures_dir: Path) -> Path:
 
 
 @pytest.fixture
-def physionet_sample(fixtures_dir: Path) -> Path:
-    return fixtures_dir / "physionet_eegbci" / "S001.txt"
-
-
-@pytest.fixture
 def generic_sample(fixtures_dir: Path) -> Path:
     return fixtures_dir / "generic_sample.txt"
