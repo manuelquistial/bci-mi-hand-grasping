@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import re
 import subprocess
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
@@ -18,11 +20,15 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
+from pipeline.alignment import align_trials, apply_alignment
+from pipeline.classify import CLASSIFIERS, SCHEMES, SubjectTrials, evaluate_classifier
 from pipeline.cyton import channel_labels_for, validate_cyton_stream
+from pipeline.features import METHODS as FEATURE_METHODS
+from pipeline.features import extract_features
+from pipeline.params import ModelParams, model_params
 from pipeline.emg import validate_emg_stream
-from pipeline.epochs import is_activity_onset
+from pipeline.epochs import ACTIVITY_SECONDS, is_activity_onset
 from pipeline.live import LiveSignal, parse_marker_text
-from pipeline.windows import ActivityWindower
 from pipeline.models import StreamSummary
 from pipeline.preprocess import (
     PREVIEW_SECONDS,
@@ -33,6 +39,8 @@ from pipeline.preprocess import (
 )
 from pipeline.recorder import EmgRecorder, SessionRecorder, open_session_writer
 from pipeline.session import SESSION_NAME, EmgWriter, list_recordings, load_recording
+from pipeline.spatial import apply_spatial
+from pipeline.windows import ActivityWindower
 
 SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 ProcessStarter = Callable[[list[str]], "subprocess.Popen[Any]"]
@@ -54,6 +62,7 @@ def default_simulator_project() -> Path:
 SIMULATOR_LSL_NAME = "OpenBCI_EEG"
 DatasetLister = Callable[[], list[dict[str, str]]]
 WindowLoader = Callable[..., dict[str, Any]]
+TrialLoader = Callable[..., dict[str, Any]]
 SubjectLister = Callable[[str], list[dict[str, str]]]
 
 
@@ -167,6 +176,157 @@ def query_simulator_window(
     if not isinstance(data, dict) or not data.get("samples"):
         raise RuntimeError("participant window must include samples")
     return data
+
+
+def query_simulator_trials(
+    simulator_project: Path,
+    *,
+    dataset: str,
+    subject: str | None,
+    session_dir: str | None,
+    trial_seconds: float,
+) -> dict[str, Any]:
+    """Read every marker window from the dataset. The caller keeps the imagery ones."""
+    if not dataset:
+        raise ValueError("dataset is required")
+    command = [
+        "uv",
+        "run",
+        "--project",
+        str(simulator_project),
+        "simopenbci",
+        "--no-dialog",
+        "--dataset",
+        dataset,
+        "--dump-trials",
+        "--trial-seconds",
+        str(trial_seconds),
+    ]
+    if session_dir:
+        command.extend(["--file", session_dir])
+    if subject:
+        command.extend(["--subject", subject])
+    completed = subprocess.run(
+        command,
+        cwd=simulator_project,
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "simulator exited").strip()
+        last = detail.splitlines()[-1] if detail else "Could not read the trials"
+        raise RuntimeError(last)
+    data = json.loads(completed.stdout or "{}")
+    if not isinstance(data, dict) or not data.get("trials"):
+        raise RuntimeError("participant trials must include trials")
+    return data
+
+
+def _imagery_trials(
+    channels: list[str],
+    *,
+    dataset: str,
+    subject: str | None,
+    session_dir: str | None,
+    sample_rate_hz: float,
+    spec: FilterSpec,
+        spatial: str,
+    trial_loader: TrialLoader,
+    params: ModelParams | None = None,
+) -> tuple[list[np.ndarray], list[str]]:
+    """Imagery trials after the same filter and spatial step as the preview."""
+    bundle = trial_loader(
+        dataset=dataset,
+        subject=subject,
+        session_dir=session_dir,
+        trial_seconds=ACTIVITY_SECONDS,
+    )
+    source_channels = [str(name) for name in bundle.get("channels") or []]
+    rate = float(bundle.get("sample_rate_hz") or sample_rate_hz)
+    prepared: list[np.ndarray] = []
+    labels: list[str] = []
+    for trial in bundle.get("trials") or []:
+        if not isinstance(trial, dict):
+            continue
+        kind = str(trial.get("kind") or "")
+        label = str(trial.get("label") or "")
+        if not is_activity_onset(dataset, kind, label):
+            continue
+        array = np.asarray(trial.get("samples"), dtype=np.float64)
+        filtered = apply_notch_then_bandpass(array, rate, spec)
+        names = source_channels or channels
+        if spatial != "none":
+            filtered, names = apply_spatial(filtered, names, spatial, params)
+        if names != channels:
+            raise ValueError("Trial channels do not match the preview")
+        prepared.append(filtered.T)
+        labels.append(label)
+    if not prepared:
+        raise ValueError("This step needs at least one imagery trial")
+    return prepared, labels
+
+
+_SUPERVISED_FEATURES = {"tdp", "csp", "fbcsp"}
+
+
+def _align_groups(
+    groups: list[SubjectTrials],
+    example: str,
+) -> tuple[list[SubjectTrials], np.ndarray]:
+    """Each participant is aligned to their own mean covariance."""
+    aligned: list[SubjectTrials] = []
+    weights: np.ndarray | None = None
+    for group in groups:
+        trials, matrix = align_trials(group.trials)
+        if group.subject == example:
+            weights = matrix
+        aligned.append(SubjectTrials(group.subject, trials, group.labels))
+    if weights is None:
+        raise ValueError("This step needs at least one imagery trial")
+    return aligned, weights
+
+
+def _group_named(groups: list[SubjectTrials], example: str) -> SubjectTrials:
+    for group in groups:
+        if group.subject == example:
+            return group
+    raise ValueError("This step needs at least one imagery trial")
+
+
+def _feature_chart(
+    feature: str,
+    groups: list[SubjectTrials],
+    example: str,
+    rate: float,
+    channels: list[str],
+    params: ModelParams | None = None,
+) -> tuple[list[str], str, list[list[float]]]:
+    """Chart one participant. TDP, CSP, and FBCSP are fit on the whole cohort."""
+    shown = _group_named(groups, example)
+    if feature not in _SUPERVISED_FEATURES or len(groups) == 1:
+        view = extract_features(feature, shown.trials, shown.labels, rate, channels, params)
+        detail = view.detail
+        if len(groups) > 1:
+            detail = f"{detail} · {len(groups)} participants"
+        return view.rows, detail, traces(view.series)
+    trials = [trial for group in groups for trial in group.trials]
+    labels = [label for group in groups for label in group.labels]
+    view = extract_features(feature, trials, labels, rate, channels, params)
+    start = 0
+    rows = view.rows
+    series = view.series
+    for group in groups:
+        end = start + len(group.labels)
+        if group.subject == example:
+            rows = view.rows[start:end]
+            series = view.series[:, start:end]
+            break
+        start = end
+    rest = view.detail.split(" · ", 1)[1] if " · " in view.detail else view.detail
+    detail = f"{len(rows)} trials · {rest} · {len(groups)} participants"
+    return rows, detail, traces(series)
 
 
 def lsl_clock() -> float:
@@ -297,7 +457,9 @@ class PipelineService:
         process_starter: ProcessStarter | None = None,
         dataset_lister: DatasetLister | None = None,
         subject_lister: SubjectLister | None = None,
+        subject_chooser: Callable[[list[dict[str, str]]], dict[str, str]] | None = None,
         window_loader: WindowLoader | None = None,
+        trial_loader: TrialLoader | None = None,
     ) -> None:
         self.recordings_root = Path(recordings_root)
         self.recordings_root.mkdir(parents=True, exist_ok=True)
@@ -309,9 +471,12 @@ class PipelineService:
         self._process_starter = process_starter or start_simulator_process
         self._dataset_lister = dataset_lister
         self._subject_lister = subject_lister
+        self._subject_chooser = subject_chooser or random.choice
         self._window_loader = window_loader
+        self._trial_loader = trial_loader
         self._datasets: list[dict[str, str]] | None = None
         self._subjects: dict[str, list[dict[str, str]]] = {}
+        self._trial_cache: dict[tuple[str, str, str, float], dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._starting = False
         self._recorder: SessionRecorder | None = None
@@ -369,8 +534,205 @@ class PipelineService:
         band_low_hz: float,
         band_high_hz: float,
         order: int,
+        spatial: str = "none",
+        alignment: str = "none",
+        features: str = "none",
+        classifier: str = "none",
+        evaluation: str = "cross_validation",
+        params: ModelParams | None = None,
     ) -> dict[str, Any]:
-        """First offline module: notch, then bandpass, on one participant window."""
+        """Notch, bandpass, spatial, alignment, one descriptor, then a classifier.
+
+        The client does not choose a participant. Charts use one person drawn
+        from the dataset. Supervised descriptors and the classifier use every
+        participant. Euclidean alignment stays on each participant's own trials.
+        """
+        del subject
+        tuned = params or ModelParams()
+        example = self._pick_subject(dataset)
+        prepared = self._preview_window(
+            dataset=dataset,
+            subject=example,
+            session_dir=session_dir,
+            notch_hz=notch_hz,
+            band_low_hz=band_low_hz,
+            band_high_hz=band_high_hz,
+            order=order,
+            spatial=spatial,
+            params=tuned,
+        )
+        rate = prepared["rate"]
+        spec = prepared["spec"]
+        channels = prepared["channels"]
+        spatial_name = prepared["spatial_name"]
+        spatial_labels = prepared["spatial_labels"]
+        spatial_view = prepared["spatial_view"]
+        current = prepared["current"]
+        current_channels = prepared["current_channels"]
+        raw_view = prepared["raw_view"]
+        filtered_view = prepared["filtered_view"]
+        seconds = prepared["seconds"]
+        alignment_name = (alignment or "none").strip().lower()
+        feature_name = (features or "none").strip().lower()
+        if feature_name not in FEATURE_METHODS:
+            raise ValueError(f"Unknown feature method {features!r}")
+        classifier_name = (classifier or "none").strip().lower()
+        evaluation_name = (evaluation or "cross_validation").strip().lower()
+        if classifier_name not in CLASSIFIERS:
+            raise ValueError(f"Unknown classifier {classifier!r}")
+        if classifier_name != "none" and evaluation_name not in SCHEMES:
+            raise ValueError(f"Unknown evaluation {evaluation!r}")
+        needs_trials = (
+            alignment_name == "euclidean" or feature_name != "none" or classifier_name != "none"
+        )
+        needs_cohort = classifier_name != "none" or feature_name in _SUPERVISED_FEATURES
+        groups: list[SubjectTrials] = []
+        if needs_trials:
+            groups = self._cohort(
+                dataset=dataset,
+                session_dir=session_dir,
+                sample_rate_hz=rate,
+                spec=spec,
+                spatial=spatial_name,
+                channels=current_channels,
+                only_subject=None if needs_cohort else example,
+                params=tuned,
+            )
+            shown_name = example or "participant"
+            if needs_cohort and shown_name not in {group.subject for group in groups}:
+                picked = self._subject_chooser(
+                    [{"id": group.subject, "label": group.subject} for group in groups]
+                )
+                example = None if str(picked["id"]) == "participant" else str(picked["id"])
+                prepared = self._preview_window(
+                    dataset=dataset,
+                    subject=example,
+                    session_dir=session_dir,
+                    notch_hz=notch_hz,
+                    band_low_hz=band_low_hz,
+                    band_high_hz=band_high_hz,
+                    order=order,
+                    spatial=spatial,
+                    params=tuned,
+                )
+                current = prepared["current"]
+                current_channels = prepared["current_channels"]
+                channels = prepared["channels"]
+                spatial_labels = prepared["spatial_labels"]
+                spatial_view = prepared["spatial_view"]
+                raw_view = prepared["raw_view"]
+                filtered_view = prepared["filtered_view"]
+                seconds = prepared["seconds"]
+        if alignment_name == "euclidean":
+            groups, weights = _align_groups(groups, example or "participant")
+            current = apply_alignment(current, weights)
+            alignment_view = traces(decimate_time(current))
+            shown = _group_named(groups, example or "participant")
+            alignment_trials = len(shown.trials)
+        elif alignment_name != "none":
+            raise ValueError(f"Unknown alignment {alignment!r}")
+        else:
+            alignment_view = []
+            alignment_trials = 0
+        feature_view: list[list[float]] = []
+        feature_rows: list[str] = []
+        feature_detail = ""
+        if feature_name != "none":
+            feature_rows, feature_detail, feature_view = _feature_chart(
+                feature_name,
+                groups,
+                example or "participant",
+                rate,
+                current_channels,
+                tuned,
+            )
+        classifier_detail = ""
+        classifier_folds: list[dict[str, float | str]] = []
+        classifier_accuracy: float | None = None
+        classifier_metrics: dict[str, float | None] = {}
+        confusion_labels: list[str] = []
+        confusion_matrix: list[list[int]] = []
+        if classifier_name != "none":
+            if classifier_name != "riemann" and feature_name == "none":
+                raise ValueError("Choose a feature method before the classifier")
+            scored = evaluate_classifier(
+                classifier_name,
+                evaluation_name,
+                feature_name,
+                groups,
+                sample_rate_hz=rate,
+                channels=current_channels,
+                params=tuned,
+            )
+            classifier_accuracy = scored.accuracy
+            classifier_detail = scored.detail
+            classifier_folds = [
+                {"name": item.name, "accuracy": round(item.accuracy, 4)}
+                for item in scored.folds
+            ]
+            classifier_metrics = {
+                key: None if value is None else round(float(value), 4)
+                for key, value in scored.metrics.items()
+            }
+            confusion_labels = scored.labels
+            confusion_matrix = scored.matrix
+        catalog = self.list_subjects(dataset)["subjects"]
+        participants = len(groups) if groups else max(len(catalog), 1)
+        shown_subject = "" if example in (None, "participant") else example
+        return {
+            "dataset": dataset,
+            "subject": shown_subject,
+            "participants": participants,
+            "sample_rate_hz": rate,
+            "seconds": seconds,
+            "channels": channels,
+            "notch_hz": spec.notch_hz,
+            "band_low_hz": spec.band_low_hz,
+            "band_high_hz": spec.band_high_hz,
+            "order": spec.order,
+            "spatial": spatial_name,
+            "spatial_channels": spatial_labels,
+            "alignment": alignment_name,
+            "alignment_trials": alignment_trials,
+            "alignment_channels": current_channels if alignment_name == "euclidean" else [],
+            "features": feature_name,
+            "feature_detail": feature_detail,
+            "feature_channels": feature_rows,
+            "classifier": classifier_name,
+            "evaluation": evaluation_name if classifier_name != "none" else "",
+            "accuracy": None if classifier_accuracy is None else round(classifier_accuracy, 4),
+            "classifier_detail": classifier_detail,
+            "classifier_folds": classifier_folds,
+            "metrics": classifier_metrics,
+            "confusion_labels": confusion_labels,
+            "confusion_matrix": confusion_matrix,
+            "raw": traces(raw_view),
+            "filtered": traces(filtered_view),
+            "spatial_signal": spatial_view,
+            "alignment_signal": alignment_view,
+            "feature_signal": feature_view,
+        }
+
+    def _pick_subject(self, dataset: str) -> str | None:
+        listed = list(self.list_subjects(dataset)["subjects"])
+        if not listed:
+            return None
+        picked = self._subject_chooser(listed)
+        return str(picked["id"])
+
+    def _preview_window(
+        self,
+        *,
+        dataset: str,
+        subject: str | None,
+        session_dir: str | None,
+        notch_hz: float,
+        band_low_hz: float,
+        band_high_hz: float,
+        order: int,
+        spatial: str,
+        params: ModelParams | None = None,
+    ) -> dict[str, Any]:
         loader = self._window_loader or (
             lambda **kwargs: query_simulator_window(self._simulator_project, **kwargs)
         )
@@ -382,31 +744,171 @@ class PipelineService:
         )
         samples = np.asarray(window["samples"], dtype=np.float64)
         rate = float(window["sample_rate_hz"])
+        tuned = params or ModelParams()
         spec = FilterSpec(
             notch_hz=float(notch_hz),
+            notch_q=float(tuned.notch_q),
             band_low_hz=float(band_low_hz),
             band_high_hz=float(band_high_hz),
             order=int(order),
         )
         filtered = apply_notch_then_bandpass(samples, rate, spec)
         raw_view = decimate_time(samples)
-        filtered_view = decimate_time(filtered)
         channels = [str(name) for name in window.get("channels") or []]
         while len(channels) < int(raw_view.shape[1]):
             channels.append(f"Ch{len(channels) + 1}")
+        channels = channels[: int(raw_view.shape[1])]
+        spatial_name = (spatial or "none").strip().lower()
+        spatial_labels: list[str] = []
+        spatial_view: list[list[float]] = []
+        current = filtered
+        current_channels = channels
+        if spatial_name != "none":
+            current, spatial_labels = apply_spatial(filtered, channels, spatial_name, tuned)
+            current_channels = spatial_labels
+            spatial_view = traces(decimate_time(current))
+        return {
+            "rate": rate,
+            "spec": spec,
+            "seconds": round(samples.shape[0] / rate, 3) if rate else 0,
+            "channels": channels,
+            "raw_view": raw_view,
+            "filtered_view": decimate_time(filtered),
+            "spatial_name": spatial_name,
+            "spatial_labels": spatial_labels,
+            "spatial_view": spatial_view,
+            "current": current,
+            "current_channels": current_channels,
+        }
+
+    def load_cohort(
+        self,
+        *,
+        dataset: str,
+        session_dir: str | None = None,
+        notch_hz: float = 50.0,
+        band_low_hz: float = 8.0,
+        band_high_hz: float = 30.0,
+        order: int = 4,
+        spatial: str = "none",
+        alignment: str = "none",
+        params: ModelParams | None = None,
+        workers: int = 1,
+    ) -> dict[str, Any]:
+        """Filtered imagery trials for every participant.
+
+        The pre-model request still draws one person for its charts. This load
+        is the shared cohort a batch scores with every classifier.
+        """
+        tuned = params or ModelParams()
+        listed = list(self.list_subjects(dataset)["subjects"])
+        example = str(listed[0]["id"]) if listed else None
+        prepared = self._preview_window(
+            dataset=dataset,
+            subject=example,
+            session_dir=session_dir,
+            notch_hz=notch_hz,
+            band_low_hz=band_low_hz,
+            band_high_hz=band_high_hz,
+            order=order,
+            spatial=spatial,
+            params=tuned,
+        )
+        alignment_name = (alignment or "none").strip().lower()
+        groups = self._cohort(
+            dataset=dataset,
+            session_dir=session_dir,
+            sample_rate_hz=prepared["rate"],
+            spec=prepared["spec"],
+            spatial=prepared["spatial_name"],
+            channels=prepared["current_channels"],
+            only_subject=None,
+            params=tuned,
+            workers=workers,
+        )
+        if alignment_name == "euclidean":
+            groups, _weights = _align_groups(groups, groups[0].subject)
+        elif alignment_name != "none":
+            raise ValueError(f"Unknown alignment {alignment!r}")
         return {
             "dataset": dataset,
-            "subject": subject or "",
-            "sample_rate_hz": rate,
-            "seconds": round(samples.shape[0] / rate, 3) if rate else 0,
-            "channels": channels[: int(raw_view.shape[1])],
-            "notch_hz": spec.notch_hz,
-            "band_low_hz": spec.band_low_hz,
-            "band_high_hz": spec.band_high_hz,
-            "order": spec.order,
-            "raw": traces(raw_view),
-            "filtered": traces(filtered_view),
+            "groups": groups,
+            "rate": prepared["rate"],
+            "channels": prepared["current_channels"],
+            "spatial": prepared["spatial_name"],
+            "alignment": alignment_name,
+            "participants": len(groups),
         }
+
+    def _cohort(
+        self,
+        *,
+        dataset: str,
+        session_dir: str | None,
+        sample_rate_hz: float,
+        spec: FilterSpec,
+        spatial: str,
+        channels: list[str],
+        only_subject: str | None,
+        params: ModelParams | None = None,
+        workers: int = 1,
+    ) -> list[SubjectTrials]:
+        """Imagery trials for every participant, or for the chart example alone."""
+        listed = [str(item["id"]) for item in self.list_subjects(dataset)["subjects"]]
+        if only_subject is not None and listed:
+            targets: list[str | None] = [only_subject]
+        elif listed:
+            targets = list(listed)
+        else:
+            targets = [None]
+
+        def load(subject_id: str | None) -> SubjectTrials | None:
+            try:
+                trials, labels = _imagery_trials(
+                    channels,
+                    dataset=dataset,
+                    subject=subject_id,
+                    session_dir=session_dir,
+                    sample_rate_hz=sample_rate_hz,
+                    spec=spec,
+                    spatial=spatial,
+                    trial_loader=self._cached_trials,
+                    params=params,
+                )
+            except ValueError as exc:
+                if "imagery trial" not in str(exc):
+                    raise
+                return None
+            return SubjectTrials(subject_id or "participant", trials, labels)
+
+        if workers <= 1 or len(targets) <= 1:
+            loaded = [load(subject_id) for subject_id in targets]
+        else:
+            with ThreadPoolExecutor(max_workers=min(int(workers), len(targets))) as pool:
+                loaded = list(pool.map(load, targets))
+        groups = [group for group in loaded if group is not None]
+        if not groups:
+            raise ValueError("This step needs at least one imagery trial")
+        return groups
+
+    def _cached_trials(self, **kwargs: Any) -> dict[str, Any]:
+        key = (
+            str(kwargs.get("dataset") or ""),
+            str(kwargs.get("subject") or ""),
+            str(kwargs.get("session_dir") or ""),
+            float(kwargs.get("trial_seconds") or 0),
+        )
+        with self._lock:
+            cached = self._trial_cache.get(key)
+        if cached is not None:
+            return cached
+        loader = self._trial_loader or (
+            lambda **load_kwargs: query_simulator_trials(self._simulator_project, **load_kwargs)
+        )
+        bundle = loader(**kwargs)
+        with self._lock:
+            self._trial_cache[key] = bundle
+        return bundle
 
     def _recording_options(self) -> list[dict[str, str]]:
         options: list[dict[str, str]] = []
@@ -909,6 +1411,12 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
                         band_low_hz=_number(body.get("band_low_hz"), 8),
                         band_high_hz=_number(body.get("band_high_hz"), 30),
                         order=int(_number(body.get("order"), 4)),
+                        spatial=str(body.get("spatial") or "none"),
+                        alignment=str(body.get("alignment") or "none"),
+                        features=str(body.get("features") or "none"),
+                        classifier=str(body.get("classifier") or "none"),
+                        evaluation=str(body.get("evaluation") or "cross_validation"),
+                        params=model_params(body.get("hyperparameters")),
                     )
                 else:
                     self._send(404, {"error": "not found"})

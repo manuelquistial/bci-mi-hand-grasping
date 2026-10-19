@@ -94,3 +94,57 @@ def test_cli_plays_recorded_session(tmp_path: Path) -> None:
     assert code == 0
     assert len(sinks[0].samples) == 2
     assert len(sinks[0].samples[0]) == 8
+
+
+def test_dump_trials_prints_complete_marker_windows(tmp_path: Path, capsys) -> None:
+    session = tmp_path / "sess"
+    session.mkdir()
+    labels = [f"Ch{index + 1}" for index in range(8)]
+    count = 8
+    samples = [float(index % 8) for index in range(count * 8)]
+    times = [10.0 + index / 250.0 for index in range(count)]
+    (session / "signal.f32").write_bytes(struct.pack(f"<{count * 8}f", *samples))
+    (session / "time.f64").write_bytes(struct.pack(f"<{count}d", *times))
+    (session / "markers.jsonl").write_text(
+        "\n".join(
+            [
+                json.dumps({"lsl_time": 10.0, "kind": "trial_start", "code": "T1", "label": "left"}),
+                json.dumps({"lsl_time": 10.024, "kind": "rest", "code": "T0", "label": "rest"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (session / "session.json").write_text(
+        json.dumps(
+            {
+                "format": "pipeline-session-v1",
+                "session_id": "sess",
+                "stream_name": "OpenBCI_EEG",
+                "sample_rate_hz": 250.0,
+                "units": "uV",
+                "channel_labels": labels,
+                "n_samples": count,
+                "device": {"eeg_channels": 8, "ground": "BIAS", "reference": "SRB2"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    code = run(
+        [
+            "--dataset",
+            "recorded_session",
+            "--file",
+            str(session),
+            "--dump-trials",
+            "--trial-seconds",
+            "0.02",
+            "--no-dialog",
+        ]
+    )
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["sample_rate_hz"] == 250
+    assert len(payload["trials"]) == 1
+    assert payload["trials"][0]["label"] == "left"
+    assert len(payload["trials"][0]["samples"]) == 5

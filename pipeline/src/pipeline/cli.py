@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+from pathlib import Path
 
 
 def _add_stream_select_args(parser: argparse.ArgumentParser, *, default_type: str | None) -> None:
@@ -107,6 +108,48 @@ def _build_parser() -> argparse.ArgumentParser:
         "--recordings",
         default=None,
         help="Directory for session folders (default: pipeline/recordings)",
+    )
+
+    batch_p = sub.add_parser(
+        "batch",
+        help="Score every classifier on one shared cohort per dataset",
+    )
+    batch_p.add_argument(
+        "--datasets",
+        default="shuqfa2024,liu2024_stroke",
+        help="Comma-separated dataset ids (default: both)",
+    )
+    batch_p.add_argument(
+        "--classifiers",
+        default="",
+        help="Comma-separated classifiers (default: all)",
+    )
+    batch_p.add_argument(
+        "--features",
+        default="csp,fbcsp",
+        help="Comma-separated descriptors (default: csp,fbcsp)",
+    )
+    batch_p.add_argument(
+        "--evaluations",
+        default="cross_validation,loso",
+        help="Comma-separated schemes (default: cross_validation,loso)",
+    )
+    batch_p.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="Parallel folds and subject reads (default: CPU count)",
+    )
+    batch_p.add_argument("--spatial", default="none")
+    batch_p.add_argument("--alignment", default="none")
+    batch_p.add_argument("--notch", type=float, default=50.0)
+    batch_p.add_argument("--band-low", type=float, default=8.0)
+    batch_p.add_argument("--band-high", type=float, default=30.0)
+    batch_p.add_argument("--order", type=int, default=4)
+    batch_p.add_argument(
+        "--output",
+        default=None,
+        help="JSON path (default: batch-results/<timestamp>.json)",
     )
 
     record_p = sub.add_parser("record", help="Record a Cyton LSL stream to a session folder")
@@ -253,6 +296,64 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_batch(args: argparse.Namespace) -> int:
+    import os
+    from datetime import datetime, timezone
+
+    from pipeline.batch import run_batch, write_batch
+    from pipeline.service import PipelineService, default_recordings_root
+
+    workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
+    output = args.output
+    if not output:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output = str(default_recordings_root().parent / "batch-results" / f"{stamp}.json")
+    service = PipelineService(default_recordings_root())
+
+    def report(row: dict) -> None:
+        if row.get("error"):
+            print(
+                f"{row['dataset']} · {row['features']} · {row['evaluation']} · "
+                f"{row['classifier']} · {row['error']}",
+                flush=True,
+            )
+            return
+        accuracy = row.get("accuracy")
+        shown = f"{accuracy:.0%}" if isinstance(accuracy, float) else ""
+        print(
+            f"{row['dataset']} · {row['features']} · {row['evaluation']} · "
+            f"{row['classifier']} · {shown} · {row['seconds']:.0f}s",
+            flush=True,
+        )
+
+    try:
+        results = run_batch(
+            service,
+            datasets=_csv(args.datasets),
+            classifiers=_csv(args.classifiers),
+            features=_csv(args.features),
+            evaluations=_csv(args.evaluations),
+            workers=workers,
+            spatial=args.spatial,
+            alignment=args.alignment,
+            notch_hz=args.notch,
+            band_low_hz=args.band_low,
+            band_high_hz=args.band_high,
+            order=args.order,
+            on_result=report,
+        )
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    write_batch(Path(output), results)
+    print(f"Wrote {len(results)} rows to {output}", flush=True)
+    return 0
+
+
+def _csv(value: str) -> list[str]:
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
 def _cmd_record(args: argparse.Namespace) -> int:
     from pathlib import Path
 
@@ -299,6 +400,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_show(args)
     if args.command == "serve":
         return _cmd_serve(args)
+    if args.command == "batch":
+        return _cmd_batch(args)
     if args.command == "record":
         return _cmd_record(args)
     parser.error(f"Unknown command: {args.command}")

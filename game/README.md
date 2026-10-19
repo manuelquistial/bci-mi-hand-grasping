@@ -62,7 +62,7 @@ npm run dev
 
 Then open [http://localhost:3000](http://localhost:3000). Use **Game** to run sessions and **Results** to inspect past sessions and export JSON/CSV.
 
-Offline **Start session** asks the pipeline service to record the Cyton EEG inlet and the 8-channel forearm EMG inlet. Online real reads that same EMG stream while the session runs. **Pre model** is the offline model builder. **Start pre model** shows one participant raw and after notch then bandpass (default 8–30 Hz). Online **Start session** asks the pipeline to start the simulator, or to listen to the Cyton. Run the service first, from `pipeline/`:
+Offline **Start session** asks the pipeline service to record the Cyton EEG inlet and the 8-channel forearm EMG inlet. Online real reads that same EMG stream while the session runs. **Pre model** is the offline model builder. **Start pre model** fits on every participant and shows one example, chosen at random, raw and after notch then bandpass (default 8–30 Hz). Online **Start session** asks the pipeline to start the simulator, or to listen to the Cyton. Run the service first, from `pipeline/`:
 
 ```bash
 uv run pipeline serve
@@ -70,7 +70,7 @@ uv run pipeline serve
 
 The recording is written to `pipeline/recordings/<session id>`. Point **Recorded session dir** at that folder and set Dataset to `recorded_session` to replay it online.
 
-Online real uses the session trial. During its activity the pipeline cuts five overlapping 2 s windows, stepping 0.5 s: 0–2, 0.5–2.5, 1–3, 1.5–3.5, and 2–4. Online simulated uses the dataset's own activity times and cuts those same windows.
+Online real uses the session trial. During its activity the pipeline cuts five overlapping 2 s windows, stepping 0.5 s: 0–2, 0.5–2.5, 1–3, 1.5–3.5, and 2–4. Online simulated uses the dataset's own activity times and cuts those same windows. **Start pre model** uses every participant in the dataset. The charts show one example, chosen at random, raw and after notch then bandpass. A spatial method — CAR, Hjorth, large Laplacian, or spherical spline — can follow that filter; None leaves it unchanged. Euclidean alignment can follow that step, or be skipped, whichever spatial method was chosen. One descriptor can follow alignment: TS, TDP, PSD, CSP, or FBCSP. CSP and FBCSP are separate. A classifier can follow that descriptor. Whichever classifier is chosen, the result shows the confusion matrix and the accuracy, sensitivity, specificity, precision, recall, F1, kappa, AUC, and MCC derived from it. The evaluation is a train/validation/test split, cross-validation, or leave-one-subject-out.
 
 ## Tests
 

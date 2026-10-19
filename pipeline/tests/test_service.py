@@ -242,7 +242,25 @@ def test_pre_model_filter_returns_raw_and_filtered(tmp_path: Path) -> None:
     def loader(**_kwargs: object) -> dict:
         return window
 
-    service = PipelineService(tmp_path, window_loader=loader)
+    def trials(**_kwargs: object) -> dict:
+        left = np.column_stack([tone[:64] * 3, tone[:64] * 0.2])
+        right = np.column_stack([tone[:64] * 0.2, tone[:64] * 3])
+        return {
+            "sample_rate_hz": rate,
+            "channels": ["C3", "C4"],
+            "trials": [
+                {"kind": "trial_start", "label": "left", "samples": left.tolist()},
+                {"kind": "rest", "label": "rest", "samples": left.tolist()},
+                {"kind": "trial_start", "label": "right", "samples": right.tolist()},
+            ],
+        }
+
+    service = PipelineService(
+        tmp_path,
+        window_loader=loader,
+        trial_loader=trials,
+        subject_lister=lambda _dataset: [],
+    )
     server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(service))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -259,14 +277,72 @@ def test_pre_model_filter_returns_raw_and_filtered(tmp_path: Path) -> None:
                 "order": 4,
             },
         )
-        assert payload["subject"] == "S001"
+        assert payload["subject"] == ""
+        assert payload["participants"] == 1
         assert payload["channels"] == ["C3", "C4"]
         assert len(payload["raw"]) == 2
         assert len(payload["filtered"]) == 2
         assert len(payload["raw"][0]) == len(payload["filtered"][0])
+        assert payload["spatial"] == "none"
+        assert payload["spatial_signal"] == []
+        assert payload["alignment"] == "none"
+        assert payload["alignment_signal"] == []
+        assert payload["features"] == "none"
+        assert payload["feature_signal"] == []
         assert max(abs(value) for value in payload["filtered"][0]) < max(
             abs(value) for value in payload["raw"][0]
         )
+        referenced = _post(
+            base + "/v1/pre-model/filter",
+            {
+                "dataset": "shuqfa2024",
+                "subject": "S001",
+                "notch_hz": 50,
+                "band_low_hz": 8,
+                "band_high_hz": 30,
+                "order": 4,
+                "spatial": "car",
+            },
+        )
+        assert referenced["spatial"] == "car"
+        assert referenced["spatial_channels"] == ["C3", "C4"]
+        assert max(abs(value) for value in referenced["spatial_signal"][0]) < 1e-6
+        aligned = _post(
+            base + "/v1/pre-model/filter",
+            {
+                "dataset": "shuqfa2024",
+                "subject": "S001",
+                "notch_hz": 50,
+                "band_low_hz": 8,
+                "band_high_hz": 30,
+                "order": 4,
+                "spatial": "none",
+                "alignment": "euclidean",
+            },
+        )
+        assert aligned["alignment"] == "euclidean"
+        assert aligned["alignment_trials"] == 2
+        assert aligned["alignment_channels"] == ["C3", "C4"]
+        assert len(aligned["alignment_signal"]) == 2
+        assert len(aligned["alignment_signal"][0]) == len(aligned["filtered"][0])
+        described = _post(
+            base + "/v1/pre-model/filter",
+            {
+                "dataset": "shuqfa2024",
+                "subject": "S001",
+                "notch_hz": 50,
+                "band_low_hz": 8,
+                "band_high_hz": 30,
+                "order": 4,
+                "spatial": "none",
+                "alignment": "none",
+                "features": "ts",
+            },
+        )
+        assert described["features"] == "ts"
+        assert described["feature_channels"] == ["C3", "C4"]
+        assert len(described["feature_signal"]) == 2
+        assert len(described["feature_signal"][0]) < 64
     finally:
         server.shutdown()
 

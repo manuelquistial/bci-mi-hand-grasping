@@ -9,5 +9,8 @@ wheels/
 # Recorded Cyton sessions
 recordings/
 
+# Batch scores from `pipeline batch`
+batch-results/
+
 # Virtual environments
 .venv

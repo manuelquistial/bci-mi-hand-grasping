@@ -97,11 +97,17 @@ El simulador no escribe esa carpeta. La lee con `--dataset recorded_session --fi
 | POST | `/v1/online/start` | Arranca el simulador o escucha la Cyton |
 | POST | `/v1/online/marker` | Online real: la fase de actividad del trial (`imagery_start`, `imagery_end`) |
 | POST | `/v1/online/stop` | Detiene la corrida online |
-| POST | `/v1/pre-model/filter` | Primer módulo offline: notch y luego pasa-banda de un participante |
+| POST | `/v1/pre-model/filter` | Primer módulo offline: notch y luego pasa-banda. El modelo usa a todos los participantes; las gráficas muestran uno al azar |
 | GET | `/v1/signal` | Últimos segundos de EEG de una corrida en vivo |
 | GET | `/v1/status` | Muestras grabadas o vistas |
 
-Pre model construye el modelo offline. El primer módulo filtra la señal continua antes de epoching: notch y después un pasa-banda. La banda por defecto es 8–30 Hz, la de los ritmos sensorimotores para imaginación de mano izquierda/derecha. `POST /v1/pre-model/filter` devuelve esa ventana en crudo y ya filtrada. Características y clasificador siguen pendientes.
+`pipeline batch` puntúa los clasificadores de los dos datasets sin pasar por la interfaz. Cada dataset se carga una vez y los folds comparten esos ensayos. Por defecto corre CSP y FBCSP, con validación cruzada y LOSO, para los 14 clasificadores. Riemannian entra una vez por esquema. El resultado queda en `batch-results/`. La pantalla de pre model sigue pidiendo un dataset y un clasificador.
+
+```bash
+uv run pipeline batch --workers 12 --output batch-results/c9.json
+```
+
+Pre model construye el modelo offline. El primer módulo filtra la señal continua antes de epoching: notch y después un pasa-banda. La banda por defecto es 8–30 Hz. Después se puede aplicar un paso espacial, o ninguno: CAR, Hjorth, Laplaciano grande o spline esférico. El alineamiento euclidiano es un paso aparte: se puede aplicar o no, sea cual sea el método espacial. Cada participante se alinea con sus propios trials. TDP, CSP, FBCSP y el clasificador usan a todos los participantes del dataset. Las gráficas muestran un participante elegido al azar. Después se elige un descriptor, o ninguno: serie temporal (TS), parámetros temporales (TDP), potencia por banda (PSD), CSP o FBCSP. CSP y FBCSP son flujos distintos; ambos separan izquierda y derecha. Luego se puede entrenar un clasificador. Sea cual sea, el resultado muestra la matriz de confusión y, a partir de ella, accuracy, sensibilidad, especificidad, precisión, recall, F1, kappa, AUC y MCC. La evaluación se elige: partición train/validación/test, validación cruzada o LOSO. `POST /v1/pre-model/filter` acepta `spatial`, `alignment`, `features`, `classifier` y `evaluation`. Características y clasificador siguen pendientes.
 
 Online real no busca la actividad en LSL: la sesión ya define cada trial, y en esa fase el pipeline corta la señal. Online simulated toma el inicio de la actividad del dataset (Liu: marcador de imaginación; Shuqfa: el periodo de la tarea; una sesión grabada: `trial_start` de la mano). En ambos casos el ventaneo es el mismo: cinco ventanas de 2 s con paso de 0,5 s, de 0–2 a 2–4, medidas desde el inicio de la actividad.
 

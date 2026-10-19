@@ -12,6 +12,7 @@ dependencies = [
     "pylsl>=1.16.0",
     "pyqt5>=5.15.11",
     "pyqtgraph>=0.14.0",
+    "scikit-learn>=1.9.1",
     "scipy>=1.17.1",
 ]
 
