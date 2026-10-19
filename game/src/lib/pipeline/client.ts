@@ -217,6 +217,8 @@ export function pipelinePreModelFilter(
       max_features: filter.maxFeatures,
       shrinkage: filter.shrinkage,
       folds: filter.folds,
+      inner_folds: filter.innerFolds,
+      search_budget: filter.searchBudget,
       test_fraction: filter.testFraction,
       validation_fraction: filter.validationFraction,
     },

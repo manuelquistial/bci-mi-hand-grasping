@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -146,6 +147,11 @@ def _build_parser() -> argparse.ArgumentParser:
     batch_p.add_argument("--band-low", type=float, default=8.0)
     batch_p.add_argument("--band-high", type=float, default=30.0)
     batch_p.add_argument("--order", type=int, default=4)
+    batch_p.add_argument(
+        "--run",
+        action="store_true",
+        help="Train the nested comparison. Without this flag a nested batch only estimates the fits",
+    )
     batch_p.add_argument(
         "--output",
         default=None,
@@ -300,7 +306,7 @@ def _cmd_batch(args: argparse.Namespace) -> int:
     import os
     from datetime import datetime, timezone
 
-    from pipeline.batch import run_batch, write_batch
+    from pipeline.batch import dry_run_estimate, run_batch
     from pipeline.service import PipelineService, default_recordings_root
 
     workers = args.workers if args.workers > 0 else (os.cpu_count() or 1)
@@ -326,13 +332,38 @@ def _cmd_batch(args: argparse.Namespace) -> int:
             flush=True,
         )
 
+    destination = Path(output)
+    evaluations = _csv(args.evaluations)
+    nested = any(item in {"nested", "nested_loso"} for item in evaluations)
+    if nested and not args.run:
+        try:
+            estimate = dry_run_estimate(
+                service,
+                datasets=_csv(args.datasets),
+                classifiers=_csv(args.classifiers),
+                features=_csv(args.features),
+                evaluations=evaluations,
+            )
+        except (ValueError, RuntimeError, OSError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        estimate_path = destination.with_name(f"{destination.stem}-estimate.json")
+        estimate_path.parent.mkdir(parents=True, exist_ok=True)
+        estimate_path.write_text(json.dumps(estimate, indent=2), encoding="utf-8")
+        print(
+            f"Dry run: {estimate['total_fits']} fits across {estimate['pipelines']} pipelines.",
+            flush=True,
+        )
+        print("No model was trained. Pass --run to start, and power the machine off when it finishes.", flush=True)
+        print(f"Wrote the estimate to {estimate_path}", flush=True)
+        return 0
     try:
         results = run_batch(
             service,
             datasets=_csv(args.datasets),
             classifiers=_csv(args.classifiers),
             features=_csv(args.features),
-            evaluations=_csv(args.evaluations),
+            evaluations=evaluations,
             workers=workers,
             spatial=args.spatial,
             alignment=args.alignment,
@@ -341,12 +372,14 @@ def _cmd_batch(args: argparse.Namespace) -> int:
             band_high_hz=args.band_high,
             order=args.order,
             on_result=report,
+            output=destination,
         )
     except (ValueError, RuntimeError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    write_batch(Path(output), results)
-    print(f"Wrote {len(results)} rows to {output}", flush=True)
+    table = destination.with_name(f"{destination.stem}-comparison.csv")
+    print(f"Wrote {len(results)} rows to {destination}", flush=True)
+    print(f"Comparison, best accuracy first: {table}", flush=True)
     return 0
 
 

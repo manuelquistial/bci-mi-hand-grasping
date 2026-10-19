@@ -37,6 +37,12 @@ class ModelParams:
     folds: int = 5
     test_fraction: float = 0.2
     validation_fraction: float = 0.2
+    inner_folds: int = 3
+    search_budget: int = 4
+    var_smoothing: float | None = None
+    min_samples_leaf: int | None = None
+    knn_weights: str = "uniform"
+    learning_rate: float | None = None
 
     def psd_bands(self) -> tuple[tuple[str, float, float], ...]:
         return (
@@ -71,6 +77,8 @@ def model_params(raw: object) -> ModelParams:
         "max_features",
         "test_fraction",
         "validation_fraction",
+        "var_smoothing",
+        "learning_rate",
     )
     ints = (
         "spline_order",
@@ -80,6 +88,8 @@ def model_params(raw: object) -> ModelParams:
         "fbcsp_keep",
         "neighbors",
         "folds",
+        "inner_folds",
+        "search_budget",
     )
     for key in floats:
         parsed = _optional_float(raw.get(key))
@@ -95,12 +105,27 @@ def model_params(raw: object) -> ModelParams:
         values["max_depth"] = int(raw["max_depth"])
     if "n_estimators" in raw and raw.get("n_estimators") not in (None, "", 0):
         values["n_estimators"] = int(raw["n_estimators"])
+    if "min_samples_leaf" in raw and raw.get("min_samples_leaf") not in (None, "", 0):
+        values["min_samples_leaf"] = int(raw["min_samples_leaf"])
+    weights = raw.get("knn_weights")
+    if isinstance(weights, str) and weights.strip().lower() in {"uniform", "distance"}:
+        values["knn_weights"] = weights.strip().lower()
     gamma = raw.get("gamma", base.gamma)
     if isinstance(gamma, str) and gamma.strip().lower() == "scale":
         values["gamma"] = "scale"
     elif gamma not in (None, ""):
         values["gamma"] = float(gamma)
     return ModelParams(**values)
+
+
+def with_updates(base: ModelParams, updates: dict[str, Any]) -> ModelParams:
+    """Copy ``base`` and replace the named fields."""
+    data = {name: getattr(base, name) for name in ModelParams.__dataclass_fields__}
+    for key, value in updates.items():
+        if key not in data:
+            raise ValueError(f"Unknown hyperparameter {key}")
+        data[key] = value
+    return ModelParams(**data)
 
 
 def _optional_float(value: object) -> float | None:

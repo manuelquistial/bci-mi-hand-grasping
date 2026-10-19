@@ -282,7 +282,16 @@ def _align_groups(
         trials, matrix = align_trials(group.trials)
         if group.subject == example:
             weights = matrix
-        aligned.append(SubjectTrials(group.subject, trials, group.labels))
+        aligned.append(
+            SubjectTrials(
+                group.subject,
+                trials,
+                group.labels,
+                group.dataset_id,
+                group.session_id,
+                group.trial_ids,
+            )
+        )
     if weights is None:
         raise ValueError("This step needs at least one imagery trial")
     return aligned, weights
@@ -879,7 +888,19 @@ class PipelineService:
                 if "imagery trial" not in str(exc):
                     raise
                 return None
-            return SubjectTrials(subject_id or "participant", trials, labels)
+            session_id = {"shuqfa2024": "02", "liu2024_stroke": "imagery"}.get(dataset, "")
+            subject_name = subject_id or "participant"
+            trial_ids = tuple(
+                f"{dataset}:{subject_name}:{session_id}:{index}" for index in range(len(labels))
+            )
+            return SubjectTrials(
+                subject_name,
+                trials,
+                labels,
+                dataset,
+                session_id,
+                trial_ids,
+            )
 
         if workers <= 1 or len(targets) <= 1:
             loaded = [load(subject_id) for subject_id in targets]

@@ -101,11 +101,16 @@ El simulador no escribe esa carpeta. La lee con `--dataset recorded_session --fi
 | GET | `/v1/signal` | Últimos segundos de EEG de una corrida en vivo |
 | GET | `/v1/status` | Muestras grabadas o vistas |
 
-`pipeline batch` puntúa los clasificadores de los dos datasets sin pasar por la interfaz. Cada dataset se carga una vez y los folds comparten esos ensayos. Por defecto corre CSP y FBCSP, con validación cruzada y LOSO, para los 14 clasificadores. Riemannian entra una vez por esquema. El resultado queda en `batch-results/`. La pantalla de pre model sigue pidiendo un dataset y un clasificador.
+`pipeline batch` compara extractores y clasificadores por separado en cada dataset, con validación anidada cross-subject. El fold externo agrupa por participante (5 folds, o LOSO si se pide `nested_loso`). El fold interno, de 3 cuando hay gente suficiente, elige los hiperparámetros con balanced accuracy promediada por persona. TS, TDP y PSD quedan fijos. CSP, FBCSP y los clasificadores se buscan dentro de un presupuesto. Riemannian no usa esos vectores: va de la covarianza del ensayo a un SVM lineal. Los dos datasets no se mezclan. Shuqfa usa el run `02` (160 Hz, 64 canales, imaginación izquierda/derecha de 4 s). Liu usa el único run `imagery` (500 Hz, 29 canales, 4 s de imaginación). La pantalla de pre model sigue eligiendo un extractor y un clasificador; Nested cross-subject aplica el mismo protocolo a esa pareja.
+
+Sin `--run` el comando solo cuenta los ajustes y no entrena. En la C7:
 
 ```bash
-uv run pipeline batch --workers 12 --output batch-results/c9.json
+uv run pipeline batch --workers 12 --output batch-results/c7.json
+uv run pipeline batch --workers 12 --run --output batch-results/c7.json
 ```
+
+El primer comando escribe `batch-results/c7-estimate.json` y no entrena. El segundo escribe `c7.json` y `c7-comparison.csv`: manifiesto, predicciones por ensayo, canales de TDP, búsqueda interna y los tiempos de búsqueda, reajuste e inferencia. El CSV ordena por balanced accuracy. Repetir el mismo `--output` no rehace las filas ya guardadas. Elegir un ganador mirando esos tests describe estos datasets; haría falta una muestra nueva para tratarlo como evaluación independiente.
 
 Pre model construye el modelo offline. El primer módulo filtra la señal continua antes de epoching: notch y después un pasa-banda. La banda por defecto es 8–30 Hz. Después se puede aplicar un paso espacial, o ninguno: CAR, Hjorth, Laplaciano grande o spline esférico. El alineamiento euclidiano es un paso aparte: se puede aplicar o no, sea cual sea el método espacial. Cada participante se alinea con sus propios trials. TDP, CSP, FBCSP y el clasificador usan a todos los participantes del dataset. Las gráficas muestran un participante elegido al azar. Después se elige un descriptor, o ninguno: serie temporal (TS), parámetros temporales (TDP), potencia por banda (PSD), CSP o FBCSP. CSP y FBCSP son flujos distintos; ambos separan izquierda y derecha. Luego se puede entrenar un clasificador. Sea cual sea, el resultado muestra la matriz de confusión y, a partir de ella, accuracy, sensibilidad, especificidad, precisión, recall, F1, kappa, AUC y MCC. La evaluación se elige: partición train/validación/test, validación cruzada o LOSO. `POST /v1/pre-model/filter` acepta `spatial`, `alignment`, `features`, `classifier` y `evaluation`. Características y clasificador siguen pendientes.
 

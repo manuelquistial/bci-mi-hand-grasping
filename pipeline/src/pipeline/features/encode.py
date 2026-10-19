@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from pipeline.features.csp import log_variances, spatial_filters
+from pipeline.features.csp import assert_hand_pair, log_variances, spatial_filters
 from pipeline.features.fbcsp import _bandpass, _bands_for, _most_informative
 from pipeline.features.psd import band_powers
 from pipeline.features.tdp import _keep_channels, _trial_matrix
@@ -64,6 +64,9 @@ class TimeDomainEncoder(FeatureEncoder):
     def fit(self, trials: Sequence[np.ndarray], labels: Sequence[str]) -> None:
         matrices = [_trial_matrix(trial, self._channels) for trial in trials]
         self._kept = _keep_channels(matrices, labels)
+        self.kept = [
+            self._channels[index] for index in self._kept if index < len(self._channels)
+        ]
 
     def transform(self, trials: Sequence[np.ndarray]) -> np.ndarray:
         rows = []
@@ -78,6 +81,7 @@ class CspEncoder(FeatureEncoder):
         self._pairs = pairs
 
     def fit(self, trials: Sequence[np.ndarray], labels: Sequence[str]) -> None:
+        assert_hand_pair(labels)
         left = [trial for trial, label in zip(trials, labels) if label == "left"]
         right = [trial for trial, label in zip(trials, labels) if label == "right"]
         self._filters = spatial_filters(left, right, pairs=self._pairs)
@@ -109,6 +113,7 @@ class FbcspEncoder(FeatureEncoder):
         self._chosen: list[int] = []
 
     def fit(self, trials: Sequence[np.ndarray], labels: Sequence[str]) -> None:
+        assert_hand_pair(labels)
         columns: list[np.ndarray] = []
         self._filters = []
         for low, high in _bands_for(self._rate, self._low, self._high, self._width):

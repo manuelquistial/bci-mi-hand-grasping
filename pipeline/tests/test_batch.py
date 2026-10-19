@@ -6,7 +6,9 @@ from pathlib import Path
 
 import numpy as np
 
-from pipeline.batch import iter_jobs, run_batch, write_batch
+import json
+
+from pipeline.batch import comparison_rows, iter_jobs, run_batch, write_batch
 from pipeline.classify import SubjectTrials, evaluate_classifier
 from pipeline.service import PipelineService
 
@@ -100,8 +102,8 @@ def test_riemann_is_not_repeated_for_every_feature() -> None:
         ("csp", "loso", "lda"),
         ("fbcsp", "cross_validation", "lda"),
         ("fbcsp", "loso", "lda"),
-        ("none", "cross_validation", "riemann"),
-        ("none", "loso", "riemann"),
+        ("covariance", "cross_validation", "riemann"),
+        ("covariance", "loso", "riemann"),
     ]
 
 
@@ -117,7 +119,7 @@ def test_batch_shares_one_cohort_and_leaves_the_preview_alone(tmp_path: Path) ->
     )
     assert [(row["features"], row["classifier"]) for row in results] == [
         ("csp", "lda"),
-        ("none", "riemann"),
+        ("covariance", "riemann"),
     ]
     assert all(row["error"] == "" for row in results)
     assert all(row["participants"] == 2 for row in results)
@@ -140,4 +142,86 @@ def test_batch_shares_one_cohort_and_leaves_the_preview_alone(tmp_path: Path) ->
     assert "2 participants" in preview["classifier_detail"]
     destination = tmp_path / "batch.json"
     write_batch(destination, results)
-    assert "lda" in destination.read_text(encoding="utf-8")
+    assert "confusion_matrix" in destination.read_text(encoding="utf-8")
+
+
+def test_saved_run_keeps_matrices_timing_and_the_best_row_first(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    destination = tmp_path / "batch.json"
+    loads = {"count": 0}
+    original = service.load_cohort
+
+    def counting(**kwargs: object) -> dict:
+        loads["count"] += 1
+        return original(**kwargs)
+
+    service.load_cohort = counting  # type: ignore[method-assign]
+    results = run_batch(
+        service,
+        datasets=("shuqfa2024",),
+        classifiers=("lda", "gaussian_nb"),
+        features=("csp",),
+        evaluations=("cross_validation",),
+        workers=2,
+        output=destination,
+    )
+    assert loads["count"] == 1
+    saved = json.loads(destination.read_text(encoding="utf-8"))
+    assert saved["elapsed_seconds"] >= 0
+    assert saved["datasets"][0]["load_seconds"] >= 0
+    covariance = saved["datasets"][0]["covariances"]
+    assert [item["subject"] for item in covariance] == ["S001", "S002"]
+    assert len(covariance[0]["matrix"]) == 2
+    assert len(covariance[0]["matrix"][0]) == 2
+    assert results[0]["confusion_matrix"]
+    assert results[0]["seconds"] >= 0
+    table = destination.with_name("batch-comparison.csv").read_text(encoding="utf-8")
+    assert table.splitlines()[1].startswith("1,")
+    run_batch(
+        service,
+        datasets=("shuqfa2024",),
+        classifiers=("lda", "gaussian_nb"),
+        features=("csp",),
+        evaluations=("cross_validation",),
+        workers=2,
+        output=destination,
+    )
+    assert loads["count"] == 1
+
+
+def test_comparison_puts_the_higher_accuracy_first() -> None:
+    rows = comparison_rows(
+        [
+            {
+                "dataset": "shuqfa2024",
+                "features": "csp",
+                "evaluation": "loso",
+                "classifier": "lda",
+                "accuracy": 0.4,
+                "participants": 2,
+                "seconds": 3.5,
+                "metrics": {"accuracy": 0.4, "kappa": 0.1, "f1": 0.4},
+                "confusion_labels": ["left", "right"],
+                "confusion_matrix": [[1, 1], [1, 1]],
+                "error": "",
+            },
+            {
+                "dataset": "shuqfa2024",
+                "features": "csp",
+                "evaluation": "loso",
+                "classifier": "svm_rbf",
+                "accuracy": 0.9,
+                "participants": 2,
+                "seconds": 8.0,
+                "metrics": {"accuracy": 0.9, "kappa": 0.8, "f1": 0.9},
+                "confusion_labels": ["left", "right"],
+                "confusion_matrix": [[4, 0], [1, 3]],
+                "error": "",
+            },
+        ]
+    )
+    assert rows[0]["classifier"] == "svm_rbf"
+    assert rows[0]["rank"] == 1
+    assert rows[0]["seconds"] == 8.0
+    assert rows[0]["confusion_matrix"] == [[4, 0], [1, 3]]
+    assert rows[1]["rank"] == 2

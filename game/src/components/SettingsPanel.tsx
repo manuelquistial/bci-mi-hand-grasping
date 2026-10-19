@@ -430,12 +430,15 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
                 })
               }
             >
+              <option value="nested">Nested cross-subject</option>
+              <option value="nested_loso">Nested LOSO</option>
               <option value="split">Train / validation / test</option>
               <option value="cross_validation">Cross-validation</option>
               <option value="loso">LOSO</option>
             </select>
           </label>
-          {settings.preModel.evaluation === "cross_validation" ? (
+          {settings.preModel.evaluation === "nested" ||
+          settings.preModel.evaluation === "cross_validation" ? (
             <NumberField
               label="Folds"
               value={settings.preModel.folds ?? 5}
@@ -443,6 +446,25 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
               min={2}
               onChange={(value) => setNested("preModel", { folds: value })}
             />
+          ) : null}
+          {settings.preModel.evaluation === "nested" ||
+          settings.preModel.evaluation === "nested_loso" ? (
+            <>
+              <NumberField
+                label="Inner folds"
+                value={settings.preModel.innerFolds ?? 3}
+                step={1}
+                min={2}
+                onChange={(value) => setNested("preModel", { innerFolds: value })}
+              />
+              <NumberField
+                label="Search budget"
+                value={settings.preModel.searchBudget ?? 4}
+                step={1}
+                min={1}
+                onChange={(value) => setNested("preModel", { searchBudget: value })}
+              />
+            </>
           ) : null}
           {settings.preModel.evaluation === "split" ? (
             <>

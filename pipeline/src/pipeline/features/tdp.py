@@ -2,7 +2,8 @@
 
 Each channel contributes the log variance and the log power of the first and
 second derivatives, normalized by the previous one. Channels whose Fisher
-ratio is below the median, comparing left with right, are left out.
+ratio is below the median are left out. With more than two classes the score
+is the mean of each class against the rest.
 """
 
 from __future__ import annotations
@@ -69,15 +70,45 @@ def _trial_matrix(trial: np.ndarray, channels: Sequence[str]) -> np.ndarray:
 
 
 def _keep_channels(matrices: list[np.ndarray], labels: Sequence[str]) -> list[int]:
+    """Keep channels at or above the median class-versus-rest Fisher score.
+
+    Two classes reduce to the original left-versus-right score. Extra classes
+    stay in the comparison instead of being dropped.
+    """
     count = matrices[0].shape[0]
-    left = [matrix for matrix, label in zip(matrices, labels) if label == "left"]
-    right = [matrix for matrix, label in zip(matrices, labels) if label == "right"]
-    if not left or not right:
+    classes = sorted({str(label) for label in labels})
+    if len(classes) < 2:
         return list(range(count))
-    scores = [_fisher(np.stack(left)[:, index], np.stack(right)[:, index]) for index in range(count)]
-    cutoff = float(np.median(scores))
-    kept = [index for index, score in enumerate(scores) if score >= cutoff]
-    return kept or [int(np.argmax(scores))]
+    scores = [_channel_score(matrices, labels, index, classes) for index in range(count)]
+    finite = [score for score in scores if np.isfinite(score)]
+    if not finite:
+        return list(range(count))
+    cutoff = float(np.median(finite))
+    kept = [index for index, score in enumerate(scores) if np.isfinite(score) and score >= cutoff]
+    if kept:
+        return kept
+    best = max(range(count), key=lambda index: scores[index] if np.isfinite(scores[index]) else -1.0)
+    return [best]
+
+
+def _channel_score(
+    matrices: list[np.ndarray],
+    labels: Sequence[str],
+    index: int,
+    classes: Sequence[str],
+) -> float:
+    parts: list[float] = []
+    for name in classes:
+        one = [matrix for matrix, label in zip(matrices, labels) if label == name]
+        rest = [matrix for matrix, label in zip(matrices, labels) if label != name]
+        if not one or not rest:
+            continue
+        score = _fisher(np.stack(one)[:, index], np.stack(rest)[:, index])
+        if np.isfinite(score):
+            parts.append(score)
+    if not parts:
+        return 0.0
+    return float(np.mean(parts))
 
 
 def _fisher(left: np.ndarray, right: np.ndarray) -> float:

@@ -12,7 +12,7 @@ from collections.abc import Sequence
 import numpy as np
 from scipy.signal import butter, filtfilt
 
-from pipeline.features.csp import log_variances, spatial_filters
+from pipeline.features.csp import assert_hand_pair, log_variances, spatial_filters
 
 _ORDER = 4
 _KEEP = 4
@@ -33,6 +33,7 @@ def fbcsp_features(
     """Return ``(feature names, values)`` after mutual-information selection."""
     if len(labels) != len(trials) or not trials:
         raise ValueError("FBCSP needs one label per trial")
+    assert_hand_pair(labels)
     rate = float(sample_rate_hz)
     names: list[str] = []
     columns: list[np.ndarray] = []

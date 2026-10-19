@@ -6,6 +6,7 @@ enters that fit.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import TypeVar
@@ -21,7 +22,7 @@ from pipeline.params import ModelParams
 from pipeline.classify.riemann import TangentEncoder
 from pipeline.features.encode import FeatureEncoder, make_encoder
 
-SCHEMES = ("split", "cross_validation", "loso")
+SCHEMES = ("split", "cross_validation", "loso", "nested", "nested_loso")
 _SEED = 42
 
 
@@ -32,6 +33,9 @@ class SubjectTrials:
     subject: str
     trials: list[np.ndarray]
     labels: list[str]
+    dataset_id: str = ""
+    session_id: str = ""
+    trial_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,7 @@ class Prediction:
     y_pred: np.ndarray
     scores: np.ndarray | None
     score_labels: list[str]
+    predict_seconds: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,7 @@ class Evaluation:
     labels: list[str]
     matrix: list[list[int]]
     metrics: dict[str, float | None]
+    report: dict | None = None
 
 
 def evaluate_classifier(
@@ -69,6 +75,7 @@ def evaluate_classifier(
     channels: Sequence[str],
     params: ModelParams | None = None,
     workers: int = 1,
+    manifest: dict | None = None,
 ) -> Evaluation:
     """Score one classifier with the chosen evaluation.
 
@@ -84,6 +91,20 @@ def evaluate_classifier(
     if name != "riemann" and feature == "none":
         raise ValueError("Choose a feature method before the classifier")
     tuned = params or ModelParams()
+    if kind in {"nested", "nested_loso"}:
+        from pipeline.classify.nested import evaluate_nested
+
+        return evaluate_nested(
+            name,
+            feature,
+            groups,
+            sample_rate_hz=sample_rate_hz,
+            channels=channels,
+            params=tuned,
+            workers=workers,
+            outer="loso" if kind == "nested_loso" else "group",
+            manifest=manifest,
+        )
     if kind == "loso":
         return _loso(name, feature, groups, sample_rate_hz, channels, tuned, workers)
     group = _combine(groups)
@@ -338,7 +359,9 @@ def _score(
         model.fit(learned, np.asarray(train_labels))
     except (IndexError, np.linalg.LinAlgError) as exc:
         raise ValueError(f"Could not fit {classifier} on this training fold") from exc
+    predict_started = time.perf_counter()
     predicted = model.predict(held)
+    predict_seconds = time.perf_counter() - predict_started
     true = np.asarray(test_labels)
     class_scores, score_labels = _class_scores(model, held)
     return Prediction(
@@ -347,6 +370,7 @@ def _score(
         np.asarray(predicted),
         class_scores,
         score_labels,
+        predict_seconds,
     )
 
 

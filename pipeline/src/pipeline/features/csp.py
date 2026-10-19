@@ -43,12 +43,23 @@ def log_variances(trial: np.ndarray, filters: np.ndarray) -> np.ndarray:
     return np.log(np.var(projected, axis=1) + _EPS)
 
 
+def assert_hand_pair(labels: Sequence[str]) -> None:
+    """CSP and FBCSP compare left with right. Other classes are not dropped."""
+    extra = sorted({str(label) for label in labels} - {"left", "right"})
+    if extra:
+        raise ValueError(
+            "CSP and FBCSP are left versus right. Other classes are present: "
+            + ", ".join(extra)
+        )
+
+
 def csp_features(
     trials: Sequence[np.ndarray],
     labels: Sequence[str],
     pairs: int = _M,
 ) -> tuple[list[str], np.ndarray]:
     """Return ``(feature names, values)`` with one row per trial."""
+    assert_hand_pair(labels)
     left, right = _split(trials, labels)
     filters = spatial_filters(left, right, pairs=pairs)
     names = [f"left {index + 1}" for index in range(filters.shape[1] // 2)]

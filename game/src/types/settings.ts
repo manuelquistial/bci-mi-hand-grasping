@@ -76,7 +76,7 @@ export type SessionSettings = {
       | "boosted_trees"
       | "bagged_trees"
       | "rusboosted_trees";
-    evaluation: "split" | "cross_validation" | "loso";
+    evaluation: "split" | "cross_validation" | "loso" | "nested" | "nested_loso";
     notchQ: number;
     hjorthDegrees: number;
     laplacianRadiusDegrees: number;
@@ -104,6 +104,8 @@ export type SessionSettings = {
     maxFeatures: number;
     shrinkage: number | null;
     folds: number;
+    innerFolds: number;
+    searchBudget: number;
     testFraction: number;
     validationFraction: number;
   };
@@ -188,6 +190,8 @@ export const defaultSessionSettings = (): SessionSettings => ({
     maxFeatures: 0.5,
     shrinkage: null,
     folds: 5,
+    innerFolds: 3,
+    searchBudget: 4,
     testFraction: 0.2,
     validationFraction: 0.2,
   },

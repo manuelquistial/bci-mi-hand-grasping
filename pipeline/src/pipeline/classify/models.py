@@ -79,17 +79,24 @@ def build_model(
     if name in {"linear_svm", "riemann"}:
         return SVC(kernel="linear", C=penalty, random_state=42)
     if name == "knn":
-        return KNeighborsClassifier(n_neighbors=neighbors)
+        return KNeighborsClassifier(n_neighbors=neighbors, weights=tuned.knn_weights or "uniform")
     if name == "gaussian_nb":
-        return GaussianNB()
+        if tuned.var_smoothing is None:
+            return GaussianNB()
+        return GaussianNB(var_smoothing=float(tuned.var_smoothing))
     if name == "decision_tree":
-        return DecisionTreeClassifier(max_depth=depth, random_state=42)
+        return DecisionTreeClassifier(
+            max_depth=depth,
+            min_samples_leaf=_leaf(tuned),
+            random_state=42,
+        )
     if name == "svm_rbf":
         return SVC(kernel="rbf", C=penalty, gamma=tuned.gamma, random_state=42)
     if name == "random_forest":
         return RandomForestClassifier(
             n_estimators=trees,
             max_depth=depth,
+            min_samples_leaf=_leaf(tuned),
             random_state=42,
         )
     if name == "random_subspace_knn":
@@ -102,19 +109,39 @@ def build_model(
         )
     if name == "boosted_trees":
         return AdaBoostClassifier(
-            estimator=DecisionTreeClassifier(max_depth=depth, random_state=42),
+            estimator=DecisionTreeClassifier(
+                max_depth=depth,
+                min_samples_leaf=_leaf(tuned),
+                random_state=42,
+            ),
             n_estimators=trees,
+            learning_rate=1.0 if tuned.learning_rate is None else float(tuned.learning_rate),
             random_state=42,
         )
     if name == "bagged_trees":
         return BaggingClassifier(
-            estimator=DecisionTreeClassifier(max_depth=depth, random_state=42),
+            estimator=DecisionTreeClassifier(
+                max_depth=depth,
+                min_samples_leaf=_leaf(tuned),
+                random_state=42,
+            ),
             n_estimators=trees,
             random_state=42,
         )
     if name == "rusboosted_trees":
-        return RusBoost(n_estimators=trees, max_depth=depth or 2, random_state=42)
+        return RusBoost(
+            n_estimators=trees,
+            max_depth=depth or 2,
+            learning_rate=1.0 if tuned.learning_rate is None else float(tuned.learning_rate),
+            random_state=42,
+        )
     raise ValueError(f"Unknown classifier {name!r}")
+
+
+def _leaf(params: ModelParams) -> int:
+    if params.min_samples_leaf is None or params.min_samples_leaf < 1:
+        return 1
+    return int(params.min_samples_leaf)
 
 
 def _depth(name: str, params: ModelParams) -> int | None:
@@ -132,10 +159,12 @@ class RusBoost(BaseEstimator, ClassifierMixin):
         self,
         n_estimators: int = 30,
         max_depth: int = 2,
+        learning_rate: float = 1.0,
         random_state: int = 42,
     ) -> None:
         self.n_estimators = n_estimators
         self.max_depth = max_depth
+        self.learning_rate = learning_rate
         self.random_state = random_state
 
     def fit(self, samples: np.ndarray, labels: np.ndarray) -> "RusBoost":
@@ -160,7 +189,9 @@ class RusBoost(BaseEstimator, ClassifierMixin):
             predicted = tree.predict(array)
             error = float(np.average(predicted != y, weights=weight))
             error = min(max(error, 1e-6), 1.0 - 1e-6)
-            alpha = float(np.log((1.0 - error) / error) + np.log(classes.size - 1))
+            alpha = float(self.learning_rate) * float(
+                np.log((1.0 - error) / error) + np.log(classes.size - 1)
+            )
             if alpha <= 0:
                 continue
             weight *= np.exp(alpha * (predicted != y))

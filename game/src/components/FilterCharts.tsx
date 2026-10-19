@@ -180,6 +180,7 @@ function classifierTitle(method: string): string {
 }
 
 const METRIC_ORDER = [
+  ["balanced_accuracy", "Balanced accuracy"],
   ["accuracy", "Accuracy"],
   ["sensitivity", "Sensitivity"],
   ["specificity", "Specificity"],
@@ -192,6 +193,7 @@ const METRIC_ORDER = [
 ] as const;
 
 const PERCENT = new Set([
+  "balanced_accuracy",
   "accuracy",
   "sensitivity",
   "specificity",
