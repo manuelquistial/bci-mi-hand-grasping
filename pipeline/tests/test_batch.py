@@ -225,3 +225,72 @@ def test_comparison_puts_the_higher_accuracy_first() -> None:
     assert rows[0]["seconds"] == 8.0
     assert rows[0]["confusion_matrix"] == [[4, 0], [1, 3]]
     assert rows[1]["rank"] == 2
+    assert rows[0]["spatial"] == "none"
+    assert rows[0]["alignment"] == "none"
+
+
+def test_batch_prepares_each_spatial_method_from_one_load(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    loads = {"count": 0}
+    original = service.load_cohort
+
+    def counting(**kwargs: object) -> dict:
+        loads["count"] += 1
+        assert kwargs["spatial"] == "none"
+        assert kwargs["alignment"] == "none"
+        return original(**kwargs)
+
+    service.load_cohort = counting  # type: ignore[method-assign]
+    results = run_batch(
+        service,
+        datasets=("shuqfa2024",),
+        classifiers=("lda",),
+        features=("csp",),
+        evaluations=("cross_validation",),
+        spatial=("none", "car"),
+        alignment="none",
+        workers=1,
+    )
+    assert loads["count"] == 1
+    assert [(row["spatial"], row["alignment"], row["classifier"]) for row in results] == [
+        ("none", "none", "lda"),
+        ("car", "none", "lda"),
+    ]
+    assert all(row["error"] == "" for row in results)
+
+
+def test_failed_row_is_retried_and_a_success_is_kept(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    destination = tmp_path / "batch.json"
+    results = run_batch(
+        service,
+        datasets=("shuqfa2024",),
+        classifiers=("lda", "gaussian_nb"),
+        features=("csp",),
+        evaluations=("cross_validation",),
+        workers=1,
+        output=destination,
+    )
+    kept = next(row for row in results if row["classifier"] == "gaussian_nb")
+    saved = json.loads(destination.read_text(encoding="utf-8"))
+    for row in saved["results"]:
+        if row["classifier"] == "lda":
+            row["error"] = "killed"
+            row["metrics"] = {}
+            row["accuracy"] = None
+    destination.write_text(json.dumps(saved), encoding="utf-8")
+    again = run_batch(
+        service,
+        datasets=("shuqfa2024",),
+        classifiers=("lda", "gaussian_nb"),
+        features=("csp",),
+        evaluations=("cross_validation",),
+        workers=1,
+        output=destination,
+    )
+    lda = next(row for row in again if row["classifier"] == "lda")
+    naive = next(row for row in again if row["classifier"] == "gaussian_nb")
+    assert lda["error"] == ""
+    assert lda["accuracy"] is not None
+    assert naive["seconds"] == kept["seconds"]
+    assert naive["accuracy"] == kept["accuracy"]

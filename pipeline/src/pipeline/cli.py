@@ -8,6 +8,8 @@ import sys
 import time
 from pathlib import Path
 
+from pipeline.spatial import METHODS as SPATIAL_METHODS
+
 
 def _add_stream_select_args(parser: argparse.ArgumentParser, *, default_type: str | None) -> None:
     parser.add_argument(
@@ -127,13 +129,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     batch_p.add_argument(
         "--features",
-        default="csp,fbcsp",
-        help="Comma-separated descriptors (default: csp,fbcsp)",
+        default="ts,tdp,psd,csp,fbcsp",
+        help="Comma-separated descriptors (default: ts,tdp,psd,csp,fbcsp)",
     )
     batch_p.add_argument(
         "--evaluations",
-        default="cross_validation,loso",
-        help="Comma-separated schemes (default: cross_validation,loso)",
+        default="nested",
+        help="Comma-separated schemes (default: nested)",
     )
     batch_p.add_argument(
         "--workers",
@@ -141,8 +143,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0,
         help="Parallel folds and subject reads (default: CPU count)",
     )
-    batch_p.add_argument("--spatial", default="none")
-    batch_p.add_argument("--alignment", default="none")
+    batch_p.add_argument(
+        "--spatial",
+        default=",".join(SPATIAL_METHODS),
+        help="Comma-separated spatial methods (default: none,car,hjorth,large_laplacian,spherical_spline)",
+    )
+    batch_p.add_argument(
+        "--alignment",
+        default="none,euclidean",
+        help="Comma-separated alignments (default: none,euclidean)",
+    )
     batch_p.add_argument("--notch", type=float, default=50.0)
     batch_p.add_argument("--band-low", type=float, default=8.0)
     batch_p.add_argument("--band-high", type=float, default=30.0)
@@ -319,7 +329,8 @@ def _cmd_batch(args: argparse.Namespace) -> int:
     def report(row: dict) -> None:
         if row.get("error"):
             print(
-                f"{row['dataset']} · {row['features']} · {row['evaluation']} · "
+                f"{row['dataset']} · {row.get('spatial') or 'none'} · "
+                f"{row.get('alignment') or 'none'} · {row['features']} · {row['evaluation']} · "
                 f"{row['classifier']} · {row['error']}",
                 flush=True,
             )
@@ -327,7 +338,8 @@ def _cmd_batch(args: argparse.Namespace) -> int:
         accuracy = row.get("accuracy")
         shown = f"{accuracy:.0%}" if isinstance(accuracy, float) else ""
         print(
-            f"{row['dataset']} · {row['features']} · {row['evaluation']} · "
+            f"{row['dataset']} · {row.get('spatial') or 'none'} · "
+            f"{row.get('alignment') or 'none'} · {row['features']} · {row['evaluation']} · "
             f"{row['classifier']} · {shown} · {row['seconds']:.0f}s",
             flush=True,
         )
@@ -343,6 +355,8 @@ def _cmd_batch(args: argparse.Namespace) -> int:
                 classifiers=_csv(args.classifiers),
                 features=_csv(args.features),
                 evaluations=evaluations,
+                spatial=_csv(args.spatial),
+                alignment=_csv(args.alignment),
             )
         except (ValueError, RuntimeError, OSError) as exc:
             print(f"error: {exc}", file=sys.stderr)
@@ -365,8 +379,8 @@ def _cmd_batch(args: argparse.Namespace) -> int:
             features=_csv(args.features),
             evaluations=evaluations,
             workers=workers,
-            spatial=args.spatial,
-            alignment=args.alignment,
+            spatial=_csv(args.spatial),
+            alignment=_csv(args.alignment),
             notch_hz=args.notch,
             band_low_hz=args.band_low,
             band_high_hz=args.band_high,

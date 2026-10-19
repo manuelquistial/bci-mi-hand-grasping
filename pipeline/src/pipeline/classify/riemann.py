@@ -12,6 +12,8 @@ from collections.abc import Sequence
 import numpy as np
 from scipy.linalg import logm
 
+from pipeline.features import cache
+
 _EPS = 1e-12
 
 
@@ -34,6 +36,9 @@ class TangentEncoder:
 
 
 def _covariance(trial: np.ndarray) -> np.ndarray:
+    stored = cache.covariance_of(trial)
+    if stored is not None:
+        return stored[0]
     array = np.asarray(trial, dtype=np.float64)
     centered = array - array.mean(axis=1, keepdims=True)
     return (centered @ centered.T) / (centered.shape[1] - 1)

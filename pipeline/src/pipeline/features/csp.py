@@ -24,8 +24,16 @@ def spatial_filters(
     """Columns are filters, largest eigenvalues first, then the smallest."""
     if not left or not right:
         raise ValueError("CSP needs left and right trials")
-    cov_left = _mean_covariance(left)
-    cov_right = _mean_covariance(right)
+    return filters_from_covariances(_mean_covariance(left), _mean_covariance(right), pairs=pairs)
+
+
+def filters_from_covariances(
+    cov_left: np.ndarray,
+    cov_right: np.ndarray,
+    *,
+    pairs: int = _M,
+) -> np.ndarray:
+    """Same filters as :func:`spatial_filters`, starting from the two mean covariances."""
     if cov_left.shape != cov_right.shape:
         raise ValueError("Left and right trials must share a channel count")
     _eigenvalues, vectors = eigh(_shrink(cov_left), _shrink(cov_left + cov_right))
@@ -41,6 +49,24 @@ def log_variances(trial: np.ndarray, filters: np.ndarray) -> np.ndarray:
     """``log var(W^T X)`` for one trial shaped ``(channels, samples)``."""
     projected = np.asarray(filters, dtype=np.float64).T @ np.asarray(trial, dtype=np.float64)
     return np.log(np.var(projected, axis=1) + _EPS)
+
+
+def log_variances_from_covariance(
+    covariance: np.ndarray,
+    n_samples: int,
+    filters: np.ndarray,
+) -> np.ndarray:
+    """``log var(W^T X)`` from the centered covariance ``Y Y^T / (n - 1)``.
+
+    Variance ignores a constant channel mean, so this matches :func:`log_variances`.
+    """
+    count = int(n_samples)
+    if count < 2:
+        raise ValueError("CSP variance needs at least two samples")
+    projected = np.asarray(filters, dtype=np.float64).T @ np.asarray(covariance, dtype=np.float64)
+    gram = projected @ np.asarray(filters, dtype=np.float64)
+    variance = np.diag(gram) * ((count - 1) / count)
+    return np.log(variance + _EPS)
 
 
 def assert_hand_pair(labels: Sequence[str]) -> None:

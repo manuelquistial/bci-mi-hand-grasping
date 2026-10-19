@@ -1,8 +1,9 @@
-"""Score every classifier on each dataset from one shared cohort.
+"""Score every spatial, alignment, feature, and classifier combination.
 
 The pre-model request still trains one classifier. This batch loads a dataset
-once, then runs the folds of each classifier on those trials. A row is written
-as soon as it finishes, and a second launch skips rows that already succeeded.
+once, prepares each spatial method and alignment from those trials, then runs
+the classifiers together. A row is written as soon as it finishes. A later
+launch keeps rows that succeeded and retries rows that failed.
 """
 
 from __future__ import annotations
@@ -19,14 +20,17 @@ from typing import Any
 
 import numpy as np
 
-from pipeline.alignment import mean_covariance
+from pipeline.alignment import align_trials, mean_covariance
 from pipeline.classify import CLASSIFIERS, SCHEMES, SubjectTrials, evaluate_classifier
 from pipeline.features import METHODS as FEATURE_METHODS
 from pipeline.params import ModelParams
+from pipeline.spatial import METHODS as SPATIAL_METHODS
+from pipeline.spatial import apply_spatial
 
 DATASETS = ("shuqfa2024", "liu2024_stroke")
 DEFAULT_FEATURES = ("ts", "tdp", "psd", "csp", "fbcsp")
 DEFAULT_EVALUATIONS = ("nested",)
+ALIGNMENTS = ("none", "euclidean")
 # The forked workers read this cohort. The arrays stay shared on Linux.
 _ACTIVE: dict[str, Any] = {}
 METRIC_COLUMNS = (
@@ -84,10 +88,16 @@ def iter_jobs(
 
 
 def comparison_rows(results: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One block per dataset, feature, and scheme. The highest accuracy is first."""
-    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    """One block per dataset, spatial method, alignment, feature, and scheme."""
+    groups: dict[tuple[str, str, str, str, str], list[dict[str, Any]]] = {}
     for row in results:
-        key = (str(row["dataset"]), str(row["features"]), str(row["evaluation"]))
+        key = (
+            str(row["dataset"]),
+            str(row.get("spatial") or "none"),
+            str(row.get("alignment") or "none"),
+            str(row["features"]),
+            str(row["evaluation"]),
+        )
         groups.setdefault(key, []).append(row)
     ordered: list[dict[str, Any]] = []
     for key in sorted(groups):
@@ -98,6 +108,8 @@ def comparison_rows(results: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "rank": place,
                     "dataset": row["dataset"],
+                    "spatial": row.get("spatial") or "none",
+                    "alignment": row.get("alignment") or "none",
                     "features": row["features"],
                     "evaluation": row["evaluation"],
                     "classifier": row["classifier"],
@@ -120,8 +132,8 @@ def run_batch(
     features: Sequence[str] = DEFAULT_FEATURES,
     evaluations: Sequence[str] = DEFAULT_EVALUATIONS,
     workers: int = 1,
-    spatial: str = "none",
-    alignment: str = "none",
+    spatial: str | Sequence[str] = "none",
+    alignment: str | Sequence[str] = "none",
     notch_hz: float = 50.0,
     band_low_hz: float = 8.0,
     band_high_hz: float = 30.0,
@@ -130,14 +142,16 @@ def run_batch(
     on_result: Callable[[dict[str, Any]], None] | None = None,
     output: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """Load each dataset once and score every job on that cohort.
+    """Load each dataset once and score every spatial and alignment variant.
 
     When ``output`` is set, each finished job replaces the file. A later run
-    with the same path skips jobs that already have a row.
+    with the same path skips jobs that already succeeded and retries failures.
     """
     chosen = [str(dataset).strip() for dataset in datasets if str(dataset).strip()]
     if not chosen:
         raise ValueError("The batch needs at least one dataset")
+    spatials = _choice_list(spatial, SPATIAL_METHODS, "spatial method")
+    alignments = _choice_list(alignment, ALIGNMENTS, "alignment")
     names = classifier_names(classifiers)
     jobs = iter_jobs(names, features, evaluations)
     pool = max(1, int(workers))
@@ -145,7 +159,7 @@ def run_batch(
     prior = float(snapshot.get("elapsed_seconds") or 0)
     started = time.perf_counter()
     for dataset in chosen:
-        if _dataset_done(dataset, jobs, snapshot["results"]):
+        if _dataset_done(dataset, spatials, alignments, jobs, snapshot["results"]):
             continue
         try:
             loaded = time.perf_counter()
@@ -155,8 +169,8 @@ def run_batch(
                 band_low_hz=band_low_hz,
                 band_high_hz=band_high_hz,
                 order=order,
-                spatial=spatial,
-                alignment=alignment,
+                spatial="none",
+                alignment="none",
                 params=params,
                 workers=pool,
             )
@@ -168,25 +182,73 @@ def run_batch(
         _remember_dataset(snapshot, dataset, cohort, load_seconds, "")
         _checkpoint(output, snapshot, prior, started)
         manifests = _stored_manifests(snapshot, dataset)
-        pending = [
-            (feature, scheme, classifier)
-            for feature, scheme, classifier in jobs
-            if not _row_exists(snapshot["results"], dataset, feature, scheme, classifier)
-        ]
-        _score_pending(
-            pending,
-            cohort,
-            snapshot,
-            manifests,
-            dataset,
-            pool,
-            params,
-            output,
-            prior,
-            started,
-            on_result,
-        )
-    snapshot["finished"] = _all_done(chosen, jobs, snapshot["results"])
+        for spatial_name in spatials:
+            for alignment_name in alignments:
+                if _variant_done(
+                    dataset,
+                    spatial_name,
+                    alignment_name,
+                    jobs,
+                    snapshot["results"],
+                ):
+                    continue
+                try:
+                    derived = _derive_cohort(cohort, spatial_name, alignment_name, params)
+                except (ValueError, RuntimeError, OSError) as exc:
+                    _fail_variant(
+                        snapshot,
+                        cohort,
+                        jobs,
+                        dataset,
+                        spatial_name,
+                        alignment_name,
+                        str(exc),
+                        output,
+                        prior,
+                        started,
+                        on_result,
+                    )
+                    continue
+                pending = [
+                    (feature, scheme, classifier)
+                    for feature, scheme, classifier in jobs
+                    if not _row_exists(
+                        snapshot["results"],
+                        dataset,
+                        spatial_name,
+                        alignment_name,
+                        feature,
+                        scheme,
+                        classifier,
+                    )
+                ]
+                if not pending:
+                    continue
+                from pipeline.features.cache import clear, prepare
+
+                prepare(
+                    derived["groups"],
+                    float(derived["rate"]),
+                    derived["channels"],
+                    params,
+                )
+                try:
+                    _score_pending(
+                        pending,
+                        derived,
+                        snapshot,
+                        manifests,
+                        dataset,
+                        _fit_workers(pool, derived["groups"]),
+                        params,
+                        output,
+                        prior,
+                        started,
+                        on_result,
+                    )
+                finally:
+                    clear()
+    snapshot["finished"] = _all_done(chosen, spatials, alignments, jobs, snapshot["results"])
     if snapshot["finished"]:
         snapshot["finished_at"] = _now()
     _checkpoint(output, snapshot, prior, started)
@@ -235,6 +297,8 @@ def dry_run_estimate(
     classifiers: Sequence[str] | None = None,
     features: Sequence[str] = DEFAULT_FEATURES,
     evaluations: Sequence[str] = DEFAULT_EVALUATIONS,
+    spatial: str | Sequence[str] = "none",
+    alignment: str | Sequence[str] = "none",
     params: ModelParams | None = None,
 ) -> dict[str, Any]:
     """Count model fits from the subject list. Does not load trials or train."""
@@ -242,6 +306,9 @@ def dry_run_estimate(
     from pipeline.classify.splits import fold_counts
 
     tuned = params or ModelParams()
+    spatials = _choice_list(spatial, SPATIAL_METHODS, "spatial method")
+    alignments = _choice_list(alignment, ALIGNMENTS, "alignment")
+    variants = len(spatials) * len(alignments)
     names = classifier_names(classifiers)
     jobs = iter_jobs(names, features, evaluations)
     plans = []
@@ -274,24 +341,28 @@ def dry_run_estimate(
                     int(plan["inner_folds"]) * evaluated + 1
                 )
                 fits += pipeline_fits
+            fits *= variants
             total += fits
             plans.append(
                 {
                     "dataset": dataset,
                     "participants": count,
                     "evaluation": scheme,
+                    "spatial_methods": list(spatials),
+                    "alignments": list(alignments),
+                    "variants": variants,
                     "outer_folds": plan["outer_folds"],
                     "inner_folds": plan["inner_folds"],
                     "adjustment": plan["adjustment"],
                     "fits": fits,
-                    "exhaustive_pipelines": searched.get("grid", 0),
-                    "random_pipelines": searched.get("random", 0),
+                    "exhaustive_pipelines": searched.get("grid", 0) * variants,
+                    "random_pipelines": searched.get("random", 0) * variants,
                 }
             )
     return {
         "dry_run": True,
         "search_budget": tuned.search_budget,
-        "pipelines": len(jobs),
+        "pipelines": len(jobs) * variants,
         "total_fits": total,
         "plans": plans,
         "note": (
@@ -345,12 +416,14 @@ def _score_pending(
     from multiprocessing import get_context
     from threadpoolctl import threadpool_limits
 
+    finished_jobs: set[tuple[str, str, str]] = set()
     try:
         with threadpool_limits(limits=1):
             pass
         with ProcessPoolExecutor(
             max_workers=min(workers, len(payloads)),
             mp_context=get_context("fork"),
+            max_tasks_per_child=1,
         ) as executor:
             waiting = {executor.submit(_run_forked_job, payload): payload for payload in payloads}
             for finished in as_completed(waiting):
@@ -359,7 +432,20 @@ def _score_pending(
                     row = finished.result()
                 except Exception as exc:
                     row = _failed_row(cohort, feature, scheme, classifier, str(exc))
+                finished_jobs.add((feature, scheme, classifier))
                 _store_row(snapshot, row, output, prior, started, on_result)
+    except Exception as exc:
+        for feature, scheme, classifier, _params, _manifest in payloads:
+            if (feature, scheme, classifier) in finished_jobs:
+                continue
+            _store_row(
+                snapshot,
+                _failed_row(cohort, feature, scheme, classifier, str(exc)),
+                output,
+                prior,
+                started,
+                on_result,
+            )
     finally:
         _ACTIVE.clear()
 
@@ -550,29 +636,59 @@ def _matrix(values: np.ndarray) -> list[list[float]]:
     return [[round(float(value), 6) for value in row] for row in np.asarray(values)]
 
 
-def _dataset_done(dataset: str, jobs: Sequence[tuple[str, str, str]], results: Sequence[dict[str, Any]]) -> bool:
+def _dataset_done(
+    dataset: str,
+    spatials: Sequence[str],
+    alignments: Sequence[str],
+    jobs: Sequence[tuple[str, str, str]],
+    results: Sequence[dict[str, Any]],
+) -> bool:
     return all(
-        _row_exists(results, dataset, feature, scheme, classifier)
+        _variant_done(dataset, spatial_name, alignment_name, jobs, results)
+        for spatial_name in spatials
+        for alignment_name in alignments
+    )
+
+
+def _variant_done(
+    dataset: str,
+    spatial: str,
+    alignment: str,
+    jobs: Sequence[tuple[str, str, str]],
+    results: Sequence[dict[str, Any]],
+) -> bool:
+    return all(
+        _row_exists(results, dataset, spatial, alignment, feature, scheme, classifier)
         for feature, scheme, classifier in jobs
     )
 
 
 def _all_done(
     datasets: Sequence[str],
+    spatials: Sequence[str],
+    alignments: Sequence[str],
     jobs: Sequence[tuple[str, str, str]],
     results: Sequence[dict[str, Any]],
 ) -> bool:
-    return all(_dataset_done(dataset, jobs, results) for dataset in datasets)
+    return all(
+        _dataset_done(dataset, spatials, alignments, jobs, results) for dataset in datasets
+    )
 
 
 def _row_exists(
     results: Sequence[dict[str, Any]],
     dataset: str,
+    spatial: str,
+    alignment: str,
     feature: str,
     scheme: str,
     classifier: str,
 ) -> bool:
-    return any(_same_job(row, dataset, feature, scheme, classifier) for row in results)
+    return any(
+        _same_job(row, dataset, spatial, alignment, feature, scheme, classifier)
+        and not str(row.get("error") or "")
+        for row in results
+    )
 
 
 def _upsert(results: list[dict[str, Any]], row: dict[str, Any]) -> None:
@@ -580,6 +696,8 @@ def _upsert(results: list[dict[str, Any]], row: dict[str, Any]) -> None:
         if _same_job(
             existing,
             str(row["dataset"]),
+            str(row.get("spatial") or "none"),
+            str(row.get("alignment") or "none"),
             str(row["features"]),
             str(row["evaluation"]),
             str(row["classifier"]),
@@ -592,12 +710,16 @@ def _upsert(results: list[dict[str, Any]], row: dict[str, Any]) -> None:
 def _same_job(
     row: dict[str, Any],
     dataset: str,
+    spatial: str,
+    alignment: str,
     feature: str,
     scheme: str,
     classifier: str,
 ) -> bool:
     return (
         row.get("dataset") == dataset
+        and str(row.get("spatial") or "none") == spatial
+        and str(row.get("alignment") or "none") == alignment
         and row.get("features") == feature
         and row.get("evaluation") == scheme
         and row.get("classifier") == classifier
@@ -636,6 +758,8 @@ def _write_table(path: Path, rows: Sequence[dict[str, Any]]) -> None:
     fieldnames = [
         "rank",
         "dataset",
+        "spatial",
+        "alignment",
         "features",
         "evaluation",
         "classifier",
@@ -697,6 +821,139 @@ def _stored_manifests(snapshot: dict[str, Any], dataset: str) -> dict[str, dict[
         for key, value in saved.items()
         if key.startswith(prefix) and isinstance(value, dict)
     }
+
+
+def _choice_list(
+    value: str | Sequence[str],
+    allowed: Sequence[str],
+    label: str,
+) -> list[str]:
+    if isinstance(value, str):
+        requested = [item.strip() for item in value.split(",") if item.strip()]
+    else:
+        requested = [str(item).strip() for item in value if str(item).strip()]
+    if not requested:
+        raise ValueError(f"The batch needs at least one {label}")
+    return _names(requested, allowed, label)
+
+
+def _derive_cohort(
+    cohort: dict[str, Any],
+    spatial: str,
+    alignment: str,
+    params: ModelParams | None,
+) -> dict[str, Any]:
+    """Apply one spatial method and one alignment without reading the files again."""
+    groups = list(cohort["groups"])
+    channels = [str(channel) for channel in cohort["channels"]]
+    if spatial != "none" or alignment != "none":
+        groups, channels = _transform_groups(groups, channels, spatial, alignment, params)
+    return {
+        "dataset": cohort["dataset"],
+        "groups": groups,
+        "rate": cohort["rate"],
+        "channels": channels,
+        "spatial": spatial,
+        "alignment": alignment,
+        "participants": len(groups),
+    }
+
+
+def _transform_groups(
+    groups: Sequence[SubjectTrials],
+    channels: list[str],
+    spatial: str,
+    alignment: str,
+    params: ModelParams | None,
+) -> tuple[list[SubjectTrials], list[str]]:
+    tuned = params or ModelParams()
+    kept = list(channels)
+    transformed: list[SubjectTrials] = []
+    for group in groups:
+        trials: list[np.ndarray] = []
+        for trial in group.trials:
+            signal = np.ascontiguousarray(np.asarray(trial, dtype=np.float64).T)
+            if spatial != "none":
+                signal, kept = apply_spatial(signal, channels, spatial, tuned)
+            trials.append(np.ascontiguousarray(signal.T))
+        transformed.append(
+            SubjectTrials(
+                group.subject,
+                trials,
+                list(group.labels),
+                group.dataset_id,
+                group.session_id,
+                group.trial_ids,
+            )
+        )
+    if alignment != "euclidean":
+        return transformed, [str(name) for name in kept]
+    aligned: list[SubjectTrials] = []
+    for group in transformed:
+        trials, _weights = align_trials(group.trials)
+        aligned.append(
+            SubjectTrials(
+                group.subject,
+                trials,
+                list(group.labels),
+                group.dataset_id,
+                group.session_id,
+                group.trial_ids,
+            )
+        )
+    return aligned, [str(name) for name in kept]
+
+
+def _fail_variant(
+    snapshot: dict[str, Any],
+    cohort: dict[str, Any],
+    jobs: Sequence[tuple[str, str, str]],
+    dataset: str,
+    spatial: str,
+    alignment: str,
+    error: str,
+    output: Path | None,
+    prior: float,
+    started: float,
+    on_result: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    failed = {**cohort, "dataset": dataset, "spatial": spatial, "alignment": alignment}
+    for feature, scheme, classifier in jobs:
+        if _row_exists(snapshot["results"], dataset, spatial, alignment, feature, scheme, classifier):
+            continue
+        _store_row(
+            snapshot,
+            _failed_row(failed, feature, scheme, classifier, error),
+            output,
+            prior,
+            started,
+            on_result,
+        )
+
+
+def _fit_workers(requested: int, groups: Sequence[SubjectTrials]) -> int:
+    """Keep one private copy of the cohort per worker inside the free RAM."""
+    count = max(1, int(requested))
+    available = _available_ram()
+    if available is None:
+        return count
+    nbytes = sum(int(np.asarray(trial).nbytes) for group in groups for trial in group.trials)
+    if nbytes <= 0:
+        return count
+    room = max(1, int((available * 0.7) / nbytes))
+    return max(1, min(count, room))
+
+
+def _available_ram() -> int | None:
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        for line in Path("/proc/meminfo").read_text(encoding="utf-8").splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, IndexError, ValueError):
+        return None
+    return None
 
 
 def _names(requested: Sequence[str], allowed: Sequence[str], label: str) -> list[str]:
