@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import csv
 import json
+import sys
 import time
 from collections.abc import Callable, Sequence
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +27,8 @@ from pipeline.params import ModelParams
 DATASETS = ("shuqfa2024", "liu2024_stroke")
 DEFAULT_FEATURES = ("ts", "tdp", "psd", "csp", "fbcsp")
 DEFAULT_EVALUATIONS = ("nested",)
+# The forked workers read this cohort. The arrays stay shared on Linux.
+_ACTIVE: dict[str, Any] = {}
 METRIC_COLUMNS = (
     "balanced_accuracy",
     "accuracy",
@@ -163,31 +167,25 @@ def run_batch(
             continue
         _remember_dataset(snapshot, dataset, cohort, load_seconds, "")
         _checkpoint(output, snapshot, prior, started)
-        manifests: dict[str, dict[str, Any]] = {}
-        for feature, scheme, classifier in jobs:
-            if _row_exists(snapshot["results"], dataset, feature, scheme, classifier):
-                continue
-            manifest = _shared_manifest(
-                snapshot,
-                manifests,
-                cohort,
-                dataset,
-                scheme,
-                params,
-            )
-            row = _score_job(
-                cohort,
-                feature,
-                scheme,
-                classifier,
-                pool,
-                params,
-                manifest,
-            )
-            _upsert(snapshot["results"], row)
-            _checkpoint(output, snapshot, prior, started)
-            if on_result is not None:
-                on_result(row)
+        manifests = _stored_manifests(snapshot, dataset)
+        pending = [
+            (feature, scheme, classifier)
+            for feature, scheme, classifier in jobs
+            if not _row_exists(snapshot["results"], dataset, feature, scheme, classifier)
+        ]
+        _score_pending(
+            pending,
+            cohort,
+            snapshot,
+            manifests,
+            dataset,
+            pool,
+            params,
+            output,
+            prior,
+            started,
+            on_result,
+        )
     snapshot["finished"] = _all_done(chosen, jobs, snapshot["results"])
     if snapshot["finished"]:
         snapshot["finished_at"] = _now()
@@ -303,6 +301,124 @@ def dry_run_estimate(
             "to claim that winner in general."
         ),
     }
+
+
+def _score_pending(
+    pending: Sequence[tuple[str, str, str]],
+    cohort: dict[str, Any],
+    snapshot: dict[str, Any],
+    manifests: dict[str, dict[str, Any]],
+    dataset: str,
+    workers: int,
+    params: ModelParams | None,
+    output: Path | None,
+    prior: float,
+    started: float,
+    on_result: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    """Score the remaining pipelines. On Linux each one gets its own process."""
+    payloads = [
+        (
+            feature,
+            scheme,
+            classifier,
+            params,
+            _shared_manifest(snapshot, manifests, cohort, dataset, scheme, params),
+        )
+        for feature, scheme, classifier in pending
+    ]
+    if len(payloads) <= 1 or not _use_processes(workers):
+        fit_workers = workers if len(payloads) <= 1 else 1
+        for feature, scheme, classifier, job_params, manifest in payloads:
+            row = _score_job(
+                cohort,
+                feature,
+                scheme,
+                classifier,
+                fit_workers,
+                job_params,
+                manifest,
+            )
+            _store_row(snapshot, row, output, prior, started, on_result)
+        return
+    _ACTIVE["cohort"] = cohort
+    from multiprocessing import get_context
+    from threadpoolctl import threadpool_limits
+
+    try:
+        with threadpool_limits(limits=1):
+            pass
+        with ProcessPoolExecutor(
+            max_workers=min(workers, len(payloads)),
+            mp_context=get_context("fork"),
+        ) as executor:
+            waiting = {executor.submit(_run_forked_job, payload): payload for payload in payloads}
+            for finished in as_completed(waiting):
+                feature, scheme, classifier, _params, _manifest = waiting[finished]
+                try:
+                    row = finished.result()
+                except Exception as exc:
+                    row = _failed_row(cohort, feature, scheme, classifier, str(exc))
+                _store_row(snapshot, row, output, prior, started, on_result)
+    finally:
+        _ACTIVE.clear()
+
+
+def _run_forked_job(
+    payload: tuple[str, str, str, ModelParams | None, dict[str, Any] | None],
+) -> dict[str, Any]:
+    """One pipeline in a forked process. Algebra stays on a single thread."""
+    feature, scheme, classifier, params, manifest = payload
+    from threadpoolctl import threadpool_limits
+
+    with threadpool_limits(limits=1):
+        return _score_job(
+            _ACTIVE["cohort"],
+            feature,
+            scheme,
+            classifier,
+            1,
+            params,
+            manifest,
+        )
+
+
+def _store_row(
+    snapshot: dict[str, Any],
+    row: dict[str, Any],
+    output: Path | None,
+    prior: float,
+    started: float,
+    on_result: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    _upsert(snapshot["results"], row)
+    _checkpoint(output, snapshot, prior, started)
+    if on_result is not None:
+        on_result(row)
+
+
+def _failed_row(
+    cohort: dict[str, Any],
+    feature: str,
+    scheme: str,
+    classifier: str,
+    error: str,
+) -> dict[str, Any]:
+    return {
+        "dataset": cohort["dataset"],
+        "participants": cohort["participants"],
+        "spatial": cohort["spatial"],
+        "alignment": cohort["alignment"],
+        "features": feature,
+        "evaluation": scheme,
+        "classifier": classifier,
+        **_empty_score(time.perf_counter(), error),
+    }
+
+
+def _use_processes(workers: int) -> bool:
+    """Fork shares the loaded trials. macOS does not fork this stack safely."""
+    return workers > 1 and sys.platform == "linux"
 
 
 def _score_job(
@@ -554,6 +670,7 @@ def _load_snapshot(path: Path | None) -> dict[str, Any]:
     snapshot["elapsed_seconds"] = float(loaded.get("elapsed_seconds") or 0)
     snapshot["datasets"] = list(loaded.get("datasets") or [])
     snapshot["results"] = list(loaded.get("results") or [])
+    snapshot["manifests"] = dict(loaded.get("manifests") or {})
     return snapshot
 
 
@@ -567,6 +684,18 @@ def _empty_snapshot() -> dict[str, Any]:
         "datasets": [],
         "results": [],
         "ranking": [],
+        "manifests": {},
+    }
+
+
+def _stored_manifests(snapshot: dict[str, Any], dataset: str) -> dict[str, dict[str, Any]]:
+    """Reuse the fold assignment already written for this dataset."""
+    saved = snapshot.get("manifests") or {}
+    prefix = f"{dataset}:"
+    return {
+        key[len(prefix) :]: value
+        for key, value in saved.items()
+        if key.startswith(prefix) and isinstance(value, dict)
     }
 
 
