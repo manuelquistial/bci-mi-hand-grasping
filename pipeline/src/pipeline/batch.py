@@ -9,6 +9,7 @@ launch keeps rows that succeeded and retries rows that failed.
 from __future__ import annotations
 
 import csv
+import gc
 import json
 import sys
 import time
@@ -244,6 +245,7 @@ def run_batch(
                     )
                 finally:
                     clear()
+                    gc.collect()
     snapshot["finished"] = _all_done(chosen, spatials, alignments, jobs, snapshot["results"])
     if snapshot["finished"]:
         snapshot["finished_at"] = _now()
@@ -929,16 +931,34 @@ def _fail_variant(
 
 
 def _fit_workers(requested: int, groups: Sequence[SubjectTrials]) -> int:
-    """Keep one private copy of the cohort per worker inside the free RAM."""
+    """Cap forked workers so a private copy of this process still fits in RAM.
+
+    Copy-on-write breaks once a worker touches a Python object, so each
+    process can grow to about the parent's resident size, not just the trials.
+    """
     count = max(1, int(requested))
     available = _available_ram()
-    if available is None:
+    resident = _resident_ram()
+    if available is None or resident is None or resident <= 0:
         return count
-    nbytes = sum(int(np.asarray(trial).nbytes) for group in groups for trial in group.trials)
-    if nbytes <= 0:
-        return count
-    room = max(1, int((available * 0.7) / nbytes))
-    return max(1, min(count, room))
+    copies = int((available * 0.5) / resident)
+    trial_bytes = sum(int(np.asarray(trial).nbytes) for group in groups for trial in group.trials)
+    if trial_bytes > 0:
+        copies = min(copies, int((available * 0.5) / trial_bytes))
+    return max(1, min(count, copies))
+
+
+def _resident_ram() -> int | None:
+    """Resident size of this process. Forked workers can each grow to about this."""
+    if not sys.platform.startswith("linux"):
+        return None
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    except (OSError, IndexError, ValueError):
+        return None
+    return None
 
 
 def _available_ram() -> int | None:

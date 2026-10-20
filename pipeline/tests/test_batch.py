@@ -105,6 +105,22 @@ def test_parallel_folds_match_the_single_thread() -> None:
     assert [item.name for item in parallel.folds] == ["S001", "S002", "S003"]
 
 
+def test_fork_budget_stays_in_process_when_a_copy_would_not_fit(monkeypatch) -> None:
+    from pipeline import batch
+
+    monkeypatch.setattr(batch, "_available_ram", lambda: 2_000)
+    monkeypatch.setattr(batch, "_resident_ram", lambda: 5_000)
+    assert batch._fit_workers(12, []) == 1
+
+
+def test_fork_budget_allows_only_the_copies_that_fit(monkeypatch) -> None:
+    from pipeline import batch
+
+    monkeypatch.setattr(batch, "_available_ram", lambda: 10_000)
+    monkeypatch.setattr(batch, "_resident_ram", lambda: 2_000)
+    assert batch._fit_workers(12, []) == 2
+
+
 def test_each_feature_is_paired_with_each_classifier() -> None:
     jobs = iter_jobs(
         ["lda", "logistic_regression"],
