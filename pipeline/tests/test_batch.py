@@ -66,6 +66,20 @@ def _service(tmp_path: Path) -> PipelineService:
     )
 
 
+def _bump(value: int) -> int:
+    return value + 1
+
+
+def test_fork_pool_can_run_without_recycling_workers() -> None:
+    import inspect
+
+    from pipeline.batch import _linux_executor
+
+    assert "max_tasks_per_child" not in inspect.getsource(_linux_executor)
+    with _linux_executor(1) as pool:
+        assert pool.submit(_bump, 1).result(timeout=30) == 2
+
+
 def test_parallel_folds_match_the_single_thread() -> None:
     groups = [_subject(name, np.random.default_rng(2)) for name in ("S001", "S002", "S003")]
     single = evaluate_classifier(

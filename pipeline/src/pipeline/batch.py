@@ -413,18 +413,13 @@ def _score_pending(
             _store_row(snapshot, row, output, prior, started, on_result)
         return
     _ACTIVE["cohort"] = cohort
-    from multiprocessing import get_context
     from threadpoolctl import threadpool_limits
 
     finished_jobs: set[tuple[str, str, str]] = set()
     try:
         with threadpool_limits(limits=1):
             pass
-        with ProcessPoolExecutor(
-            max_workers=min(workers, len(payloads)),
-            mp_context=get_context("fork"),
-            max_tasks_per_child=1,
-        ) as executor:
+        with _linux_executor(min(workers, len(payloads))) as executor:
             waiting = {executor.submit(_run_forked_job, payload): payload for payload in payloads}
             for finished in as_completed(waiting):
                 feature, scheme, classifier, _params, _manifest = waiting[finished]
@@ -505,6 +500,13 @@ def _failed_row(
 def _use_processes(workers: int) -> bool:
     """Fork shares the loaded trials. macOS does not fork this stack safely."""
     return workers > 1 and sys.platform == "linux"
+
+
+def _linux_executor(workers: int) -> ProcessPoolExecutor:
+    """One process per pipeline. Fork rejects ``max_tasks_per_child``."""
+    from multiprocessing import get_context
+
+    return ProcessPoolExecutor(max_workers=workers, mp_context=get_context("fork"))
 
 
 def _score_job(
