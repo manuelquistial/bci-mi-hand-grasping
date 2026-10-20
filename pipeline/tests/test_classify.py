@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from pipeline.classify import SubjectTrials, evaluate_classifier
+from pipeline.classify.models import build_model
 from pipeline.service import PipelineService
 
 
@@ -88,6 +89,18 @@ def test_vector_classifier_needs_a_feature_method() -> None:
             sample_rate_hz=160.0,
             channels=["C3", "C4"],
         )
+
+
+def test_linear_svm_fit_stops_on_overlapping_features() -> None:
+    from sklearn.svm import LinearSVC
+
+    model = build_model("linear_svm", n_train=80)
+    assert isinstance(model, LinearSVC)
+    rng = np.random.default_rng(5)
+    learned = rng.normal(size=(80, 40))
+    labels = np.array(["left"] * 40 + ["right"] * 40)
+    model.fit(learned, labels)
+    assert model.predict(learned).shape == (80,)
 
 
 def test_ensembles_and_margin_models_fit() -> None:

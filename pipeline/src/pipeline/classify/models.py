@@ -17,7 +17,7 @@ from sklearn.ensemble import (
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
 from pipeline.params import ModelParams
@@ -76,7 +76,9 @@ def build_model(
     if name == "logistic_regression":
         return LogisticRegression(C=penalty, max_iter=1000, random_state=42)
     if name == "linear_svm":
-        return SVC(kernel="linear", C=penalty, random_state=42)
+        # libsvm's linear kernel has no iteration limit and does not converge
+        # on these overlapping features. liblinear stops at max_iter.
+        return LinearSVC(C=penalty, dual="auto", max_iter=5000, random_state=42)
     if name == "knn":
         return KNeighborsClassifier(n_neighbors=neighbors, weights=tuned.knn_weights or "uniform")
     if name == "gaussian_nb":
