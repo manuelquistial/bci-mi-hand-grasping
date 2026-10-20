@@ -170,7 +170,6 @@ function classifierTitle(method: string): string {
   if (method === "gaussian_nb") return "Gaussian Naive Bayes";
   if (method === "decision_tree") return "Decision tree";
   if (method === "svm_rbf") return "SVM-RBF";
-  if (method === "riemann") return "Riemannian SVM";
   if (method === "random_forest") return "Random forest";
   if (method === "random_subspace_knn") return "Random subspace k-NN";
   if (method === "boosted_trees") return "Boosted trees";

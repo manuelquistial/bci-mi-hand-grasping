@@ -66,9 +66,9 @@ def test_loso_holds_out_each_participant() -> None:
     rng = np.random.default_rng(2)
     groups = [_subject(name, rng, count=6) for name in ("S001", "S002", "S003")]
     result = evaluate_classifier(
-        "riemann",
+        "lda",
         "loso",
-        "none",
+        "csp",
         groups,
         sample_rate_hz=160.0,
         channels=["C3", "C4"],

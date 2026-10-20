@@ -5,7 +5,6 @@ from __future__ import annotations
 import numpy as np
 
 from pipeline.classify import SubjectTrials
-from pipeline.classify.riemann import TangentEncoder
 from pipeline.features.cache import clear, prepare
 from pipeline.features.csp import log_variances, log_variances_from_covariance
 from pipeline.features.encode import CspEncoder, FbcspEncoder, PowerEncoder
@@ -41,13 +40,10 @@ def test_prepared_descriptors_match_a_fresh_fit() -> None:
     raw_power = PowerEncoder(160.0, channels)
     raw_fbcsp = FbcspEncoder(160.0, pairs=1, keep=4)
     raw_fbcsp.fit(trials, labels)
-    raw_tangent = TangentEncoder()
-    raw_tangent.fit(trials, labels)
     expected = {
         "csp": raw_csp.transform(trials),
         "psd": raw_power.transform(trials),
         "fbcsp": raw_fbcsp.transform(trials),
-        "riemann": raw_tangent.transform(trials),
     }
     prepare([SubjectTrials("S001", trials, labels)], 160.0, channels)
     try:
@@ -56,11 +52,8 @@ def test_prepared_descriptors_match_a_fresh_fit() -> None:
         power = PowerEncoder(160.0, channels)
         fbcsp = FbcspEncoder(160.0, pairs=1, keep=4)
         fbcsp.fit(trials, labels)
-        tangent = TangentEncoder()
-        tangent.fit(trials, labels)
         assert np.allclose(csp.transform(trials), expected["csp"])
         assert np.allclose(power.transform(trials), expected["psd"])
         assert np.allclose(fbcsp.transform(trials), expected["fbcsp"])
-        assert np.allclose(tangent.transform(trials), expected["riemann"])
     finally:
         clear()

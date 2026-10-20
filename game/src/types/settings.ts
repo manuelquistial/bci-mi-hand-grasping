@@ -70,7 +70,6 @@ export type SessionSettings = {
       | "gaussian_nb"
       | "decision_tree"
       | "svm_rbf"
-      | "riemann"
       | "random_forest"
       | "random_subspace_knn"
       | "boosted_trees"

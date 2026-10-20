@@ -105,19 +105,21 @@ def test_parallel_folds_match_the_single_thread() -> None:
     assert [item.name for item in parallel.folds] == ["S001", "S002", "S003"]
 
 
-def test_riemann_is_not_repeated_for_every_feature() -> None:
+def test_each_feature_is_paired_with_each_classifier() -> None:
     jobs = iter_jobs(
-        ["lda", "riemann"],
+        ["lda", "logistic_regression"],
         ["csp", "fbcsp"],
         ["cross_validation", "loso"],
     )
     assert jobs == [
         ("csp", "cross_validation", "lda"),
+        ("csp", "cross_validation", "logistic_regression"),
         ("csp", "loso", "lda"),
+        ("csp", "loso", "logistic_regression"),
         ("fbcsp", "cross_validation", "lda"),
+        ("fbcsp", "cross_validation", "logistic_regression"),
         ("fbcsp", "loso", "lda"),
-        ("covariance", "cross_validation", "riemann"),
-        ("covariance", "loso", "riemann"),
+        ("fbcsp", "loso", "logistic_regression"),
     ]
 
 
@@ -126,14 +128,14 @@ def test_batch_shares_one_cohort_and_leaves_the_preview_alone(tmp_path: Path) ->
     results = run_batch(
         service,
         datasets=("shuqfa2024",),
-        classifiers=("lda", "riemann"),
+        classifiers=("lda", "logistic_regression"),
         features=("csp",),
         evaluations=("cross_validation",),
         workers=2,
     )
     assert [(row["features"], row["classifier"]) for row in results] == [
         ("csp", "lda"),
-        ("covariance", "riemann"),
+        ("csp", "logistic_regression"),
     ]
     assert all(row["error"] == "" for row in results)
     assert all(row["participants"] == 2 for row in results)

@@ -340,7 +340,6 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
               <option value="gaussian_nb">Gaussian Naive Bayes</option>
               <option value="decision_tree">Decision tree</option>
               <option value="svm_rbf">SVM-RBF</option>
-              <option value="riemann">Riemannian SVM</option>
               <option value="random_forest">Random forest</option>
               <option value="random_subspace_knn">Random subspace k-NN</option>
               <option value="boosted_trees">Boosted trees</option>
@@ -676,7 +675,7 @@ function classifierDefaults(method: string): {
 }
 
 function showsRegularization(method: string): boolean {
-  return ["logistic_regression", "linear_svm", "svm_rbf", "riemann"].includes(method);
+  return ["logistic_regression", "linear_svm", "svm_rbf"].includes(method);
 }
 
 function showsNeighbors(method: string): boolean {

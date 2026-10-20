@@ -66,22 +66,18 @@ def iter_jobs(
     features: Sequence[str],
     evaluations: Sequence[str],
 ) -> list[tuple[str, str, str]]:
-    """``(feature, evaluation, classifier)`` pairs. Riemannian runs once per scheme."""
+    """``(feature, evaluation, classifier)`` pairs."""
     feature_names = _names(features, FEATURE_METHODS, "feature method")
     scheme_names = _names(evaluations, SCHEMES, "evaluation")
-    vector = [name for name in classifiers if name != "riemann"]
-    if vector and any(name == "none" for name in feature_names):
+    if classifiers and any(name == "none" for name in feature_names):
         raise ValueError("Choose a feature method before the classifier")
     jobs: list[tuple[str, str, str]] = []
     for feature in feature_names:
         if feature == "none":
             continue
         for scheme in scheme_names:
-            for classifier in vector:
+            for classifier in classifiers:
                 jobs.append((feature, scheme, classifier))
-    if "riemann" in classifiers:
-        for scheme in scheme_names:
-            jobs.append(("covariance", scheme, "riemann"))
     if not jobs:
         raise ValueError("The batch needs at least one classifier")
     return jobs
@@ -333,8 +329,7 @@ def dry_run_estimate(
             for feature, _scheme, classifier in jobs:
                 if _scheme != scheme:
                     continue
-                space_feature = "covariance" if classifier == "riemann" else feature
-                space = search_space(classifier, space_feature)
+                space = search_space(classifier, feature)
                 _chosen, method, evaluated = select_configs(space, tuned.search_budget, 42)
                 searched[method] = searched.get(method, 0) + 1
                 pipeline_fits = int(plan["outer_folds"]) * (
@@ -503,7 +498,7 @@ def _use_processes(workers: int) -> bool:
 
 
 def _linux_executor(workers: int) -> ProcessPoolExecutor:
-    """One process per pipeline. Fork rejects ``max_tasks_per_child``."""
+    """One process per pipeline. The fork start method cannot recycle workers."""
     from multiprocessing import get_context
 
     return ProcessPoolExecutor(max_workers=workers, mp_context=get_context("fork"))
@@ -532,7 +527,7 @@ def _score_job(
         scored = evaluate_classifier(
             classifier,
             scheme,
-            "none" if classifier == "riemann" else feature,
+            feature,
             cohort["groups"],
             sample_rate_hz=float(cohort["rate"]),
             channels=cohort["channels"],

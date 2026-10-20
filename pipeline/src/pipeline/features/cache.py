@@ -2,7 +2,7 @@
 
 The nested search used to rebuild spectra, time-domain parameters, and filter-bank
 covariances on every candidate. Those values do not depend on the subject split,
-so one pass per prepared cohort is enough. CSP and Riemannian still fit on the
+so one pass per prepared cohort is enough. CSP and FBCSP still fit on the
 training side of each fold; they just stop revisiting the raw samples.
 """
 

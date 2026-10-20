@@ -19,8 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from pipeline.classify.metrics import summarize
 from pipeline.classify.models import CLASSIFIERS, build_model, scales_features
 from pipeline.params import ModelParams
-from pipeline.classify.riemann import TangentEncoder
-from pipeline.features.encode import FeatureEncoder, make_encoder
+from pipeline.features.encode import make_encoder
 
 SCHEMES = ("split", "cross_validation", "loso", "nested", "nested_loso")
 _SEED = 42
@@ -88,7 +87,7 @@ def evaluate_classifier(
     kind = scheme.strip().lower()
     if kind not in SCHEMES:
         raise ValueError(f"Unknown evaluation {scheme!r}")
-    if name != "riemann" and feature == "none":
+    if feature == "none":
         raise ValueError("Choose a feature method before the classifier")
     tuned = params or ModelParams()
     if kind in {"nested", "nested_loso"}:
@@ -342,11 +341,7 @@ def _score(
     test_labels = [group.labels[int(index)] for index in test_index]
     if len(set(train_labels)) < 2:
         raise ValueError("Training fold has only one class")
-    encoder: FeatureEncoder | TangentEncoder
-    if classifier == "riemann":
-        encoder = TangentEncoder()
-    else:
-        encoder = make_encoder(feature, rate, channels, tuned)
+    encoder = make_encoder(feature, rate, channels, tuned)
     encoder.fit(train_trials, train_labels)
     learned = encoder.transform(train_trials)
     held = encoder.transform(test_trials)

@@ -662,7 +662,7 @@ class PipelineService:
         confusion_labels: list[str] = []
         confusion_matrix: list[list[int]] = []
         if classifier_name != "none":
-            if classifier_name != "riemann" and feature_name == "none":
+            if feature_name == "none":
                 raise ValueError("Choose a feature method before the classifier")
             scored = evaluate_classifier(
                 classifier_name,

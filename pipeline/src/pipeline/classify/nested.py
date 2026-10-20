@@ -57,10 +57,9 @@ def evaluate_nested(
         from pipeline.classify.splits import check_manifest
 
         check_manifest(manifest)
-    feature_name = "covariance" if classifier == "riemann" else feature
     candidates, search_info = configs_for(
         classifier,
-        feature_name,
+        feature,
         tuned,
         tuned.search_budget,
         seed,
@@ -297,11 +296,10 @@ def _fit_subjects(
     train_index = np.arange(len(train.labels))
     test_index = np.arange(len(train.labels), len(train.labels) + len(test.labels))
     params = _apply(updates)
-    used_feature = "none" if classifier == "riemann" else feature
     if workers <= 1:
         predicted = _score(
             classifier,
-            used_feature,
+            feature,
             combined,
             train_index,
             test_index,
@@ -315,7 +313,7 @@ def _fit_subjects(
         with threadpool_limits(limits=1):
             predicted = _score(
                 classifier,
-                used_feature,
+                feature,
                 combined,
                 train_index,
                 test_index,

@@ -30,7 +30,7 @@ def pipeline_pairs(
     classifiers: list[str] | tuple[str, ...],
     features: list[str] | tuple[str, ...],
 ) -> list[tuple[str, str]]:
-    """Vector pipelines, then Riemannian on trial covariances once per call."""
+    """One job for each feature and classifier pair."""
     jobs: list[tuple[str, str]] = []
     vector = [name for name in classifiers if name in VECTOR_CLASSIFIERS]
     for feature in features:
@@ -38,8 +38,6 @@ def pipeline_pairs(
             continue
         for classifier in vector:
             jobs.append((feature, classifier))
-    if "riemann" in classifiers:
-        jobs.append(("covariance", "riemann"))
     return jobs
 
 
@@ -145,6 +143,4 @@ def _classifier_grid(classifier: str) -> list[dict[str, Any]]:
             for trees in (20, 30)
             for rate in (0.5, 1.0)
         ]
-    if classifier == "riemann":
-        return [{"regularization_c": value} for value in (0.1, 1.0, 10.0)]
     raise ValueError(f"Unknown classifier {classifier!r}")

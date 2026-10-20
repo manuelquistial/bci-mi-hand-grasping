@@ -40,7 +40,6 @@ CLASSIFIERS = (
     "gaussian_nb",
     "decision_tree",
     "svm_rbf",
-    "riemann",
     "random_forest",
     "random_subspace_knn",
     "boosted_trees",
@@ -63,7 +62,7 @@ def build_model(
     n_train: int,
     params: ModelParams | None = None,
 ) -> BaseEstimator:
-    """One estimator. ``riemann`` is a linear SVM on tangent vectors."""
+    """One estimator for a feature vector already fit on the training fold."""
     tuned = params or ModelParams()
     neighbors = min(max(1, tuned.neighbors), max(1, n_train - 1))
     depth = _depth(name, tuned)
@@ -76,7 +75,7 @@ def build_model(
         return LinearDiscriminantAnalysis(solver="lsqr", shrinkage=shrinkage)
     if name == "logistic_regression":
         return LogisticRegression(C=penalty, max_iter=1000, random_state=42)
-    if name in {"linear_svm", "riemann"}:
+    if name == "linear_svm":
         return SVC(kernel="linear", C=penalty, random_state=42)
     if name == "knn":
         return KNeighborsClassifier(n_neighbors=neighbors, weights=tuned.knn_weights or "uniform")
