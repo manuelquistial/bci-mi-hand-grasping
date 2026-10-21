@@ -168,6 +168,28 @@ def _build_parser() -> argparse.ArgumentParser:
         help="JSON path (default: batch-results/<timestamp>.json)",
     )
 
+    paper_p = sub.add_parser(
+        "paper-csp",
+        help="Score MDM and TWFB after every spatial method, both alignments, and CSP",
+    )
+    paper_p.add_argument("--datasets", default="shuqfa2024,liu2024_stroke")
+    paper_p.add_argument("--models", default="mdm,twfb_dgfmdr")
+    paper_p.add_argument(
+        "--spatial",
+        default="none,car,hjorth,large_laplacian,spherical_spline",
+    )
+    paper_p.add_argument("--alignment", default="none,euclidean")
+    paper_p.add_argument(
+        "--output",
+        default=None,
+        help="JSON path (default: batch-results/paper-csp.json). The same path resumes.",
+    )
+    paper_p.add_argument(
+        "--run",
+        action="store_true",
+        help="Train the models. Without this flag only the job list is printed",
+    )
+
     record_p = sub.add_parser("record", help="Record a Cyton LSL stream to a session folder")
     record_p.add_argument("--session-id", required=True)
     record_p.add_argument("--duration", type=float, required=True, help="Seconds to record")
@@ -397,6 +419,61 @@ def _cmd_batch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_paper_csp(args: argparse.Namespace) -> int:
+    import os
+    from pathlib import Path
+
+    from pipeline.classify.paper_models import PAPER_MODELS, score_csp_grid
+    from pipeline.service import PipelineService, default_recordings_root
+    from pipeline.spatial import METHODS as SPATIAL_METHODS
+
+    datasets = _csv(args.datasets)
+    models = _csv(args.models)
+    spatials = _csv(args.spatial)
+    alignments = _csv(args.alignment)
+    unknown_models = [name for name in models if name not in PAPER_MODELS]
+    unknown_spatial = [name for name in spatials if name not in SPATIAL_METHODS]
+    unknown_alignment = [name for name in alignments if name not in {"none", "euclidean"}]
+    if unknown_models or unknown_spatial or unknown_alignment or not datasets:
+        print("error: unknown dataset, model, spatial method, or alignment", file=sys.stderr)
+        return 1
+    variants = [(spatial, alignment) for spatial in spatials for alignment in alignments]
+    jobs = len(datasets) * len(models) * len(variants)
+    destination = Path(args.output) if args.output else default_recordings_root().parent / "batch-results" / "paper-csp.json"
+    cores = os.cpu_count() or 1
+    print(
+        f"{jobs} jobs · {len(models)} models · {len(variants)} signals · {cores} cores, one BLAS thread each.",
+        flush=True,
+    )
+    print(f"Results: {destination}", flush=True)
+    print(f"Comparison: {destination.with_name(destination.stem + '-comparison.csv')}", flush=True)
+    if not args.run:
+        print("No model was trained. Pass --run to start.", flush=True)
+        return 0
+    service = PipelineService(default_recordings_root())
+    try:
+        for dataset in datasets:
+            cohort = service.load_cohort(
+                dataset=dataset,
+                spatial="none",
+                alignment="none",
+            )
+            score_csp_grid(
+                cohort["groups"],
+                float(cohort["rate"]),
+                list(cohort["channels"]),
+                destination,
+                dataset=str(cohort["dataset"]),
+                models=models,
+                variants=variants,
+            )
+    except (ValueError, RuntimeError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Wrote {destination}", flush=True)
+    return 0
+
+
 def _csv(value: str) -> list[str]:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
@@ -449,6 +526,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_serve(args)
     if args.command == "batch":
         return _cmd_batch(args)
+    if args.command == "paper-csp":
+        return _cmd_paper_csp(args)
     if args.command == "record":
         return _cmd_record(args)
     parser.error(f"Unknown command: {args.command}")
