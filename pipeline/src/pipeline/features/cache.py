@@ -30,6 +30,16 @@ def clear() -> None:
     _CACHE.clear()
 
 
+def entry_for(trial: np.ndarray) -> dict[str, Any] | None:
+    """Descriptors already computed for this trial, if `prepare` saw it."""
+    return _CACHE.get(id(trial))
+
+
+def install(trial: np.ndarray, entry: dict[str, Any]) -> None:
+    """Attach descriptors that live in shared memory to this worker's trial view."""
+    _CACHE[id(trial)] = entry
+
+
 def prepare(
     groups: Sequence[Any],
     sample_rate_hz: float,

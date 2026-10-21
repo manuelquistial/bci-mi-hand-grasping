@@ -271,6 +271,8 @@ def _dump_trials(loader: BaseDatasetLoader, file_path: str, seconds: float) -> i
                 "samples": rows[start:end],
             }
         )
+    # Window slices keep the samples they need. Drop the rest of the recording.
+    del rows
     if not trials:
         print(f"Error: no complete trial windows in {file_path}", file=sys.stderr)
         return 1

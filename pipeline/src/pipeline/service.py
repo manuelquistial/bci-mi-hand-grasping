@@ -873,34 +873,43 @@ class PipelineService:
 
         def load(subject_id: str | None) -> SubjectTrials | None:
             try:
-                trials, labels = _imagery_trials(
-                    channels,
+                try:
+                    trials, labels = _imagery_trials(
+                        channels,
+                        dataset=dataset,
+                        subject=subject_id,
+                        session_dir=session_dir,
+                        sample_rate_hz=sample_rate_hz,
+                        spec=spec,
+                        spatial=spatial,
+                        trial_loader=self._cached_trials,
+                        params=params,
+                    )
+                except ValueError as exc:
+                    if "imagery trial" not in str(exc):
+                        raise
+                    return None
+                session_id = {"shuqfa2024": "02", "liu2024_stroke": "imagery"}.get(dataset, "")
+                subject_name = subject_id or "participant"
+                trial_ids = tuple(
+                    f"{dataset}:{subject_name}:{session_id}:{index}" for index in range(len(labels))
+                )
+                return SubjectTrials(
+                    subject_name,
+                    trials,
+                    labels,
+                    dataset,
+                    session_id,
+                    trial_ids,
+                )
+            finally:
+                # The numpy trials are copies. The raw window lists are not needed again.
+                self._forget_trials(
                     dataset=dataset,
                     subject=subject_id,
                     session_dir=session_dir,
-                    sample_rate_hz=sample_rate_hz,
-                    spec=spec,
-                    spatial=spatial,
-                    trial_loader=self._cached_trials,
-                    params=params,
+                    trial_seconds=ACTIVITY_SECONDS,
                 )
-            except ValueError as exc:
-                if "imagery trial" not in str(exc):
-                    raise
-                return None
-            session_id = {"shuqfa2024": "02", "liu2024_stroke": "imagery"}.get(dataset, "")
-            subject_name = subject_id or "participant"
-            trial_ids = tuple(
-                f"{dataset}:{subject_name}:{session_id}:{index}" for index in range(len(labels))
-            )
-            return SubjectTrials(
-                subject_name,
-                trials,
-                labels,
-                dataset,
-                session_id,
-                trial_ids,
-            )
 
         if workers <= 1 or len(targets) <= 1:
             loaded = [load(subject_id) for subject_id in targets]
@@ -912,13 +921,16 @@ class PipelineService:
             raise ValueError("This step needs at least one imagery trial")
         return groups
 
-    def _cached_trials(self, **kwargs: Any) -> dict[str, Any]:
-        key = (
+    def _trial_key(self, **kwargs: Any) -> tuple[str, str, str, float]:
+        return (
             str(kwargs.get("dataset") or ""),
             str(kwargs.get("subject") or ""),
             str(kwargs.get("session_dir") or ""),
             float(kwargs.get("trial_seconds") or 0),
         )
+
+    def _cached_trials(self, **kwargs: Any) -> dict[str, Any]:
+        key = self._trial_key(**kwargs)
         with self._lock:
             cached = self._trial_cache.get(key)
         if cached is not None:
@@ -930,6 +942,10 @@ class PipelineService:
         with self._lock:
             self._trial_cache[key] = bundle
         return bundle
+
+    def _forget_trials(self, **kwargs: Any) -> None:
+        with self._lock:
+            self._trial_cache.pop(self._trial_key(**kwargs), None)
 
     def _recording_options(self) -> list[dict[str, str]]:
         options: list[dict[str, str]] = []

@@ -105,19 +105,17 @@ def test_parallel_folds_match_the_single_thread() -> None:
     assert [item.name for item in parallel.folds] == ["S001", "S002", "S003"]
 
 
-def test_fork_budget_stays_in_process_when_a_copy_would_not_fit(monkeypatch) -> None:
+def test_worker_budget_stays_in_process_when_another_worker_would_not_fit(monkeypatch) -> None:
     from pipeline import batch
 
-    monkeypatch.setattr(batch, "_available_ram", lambda: 2_000)
-    monkeypatch.setattr(batch, "_resident_ram", lambda: 5_000)
+    monkeypatch.setattr(batch, "_available_ram", lambda: 400 * 1024 * 1024)
     assert batch._fit_workers(12, []) == 1
 
 
-def test_fork_budget_allows_only_the_copies_that_fit(monkeypatch) -> None:
+def test_worker_budget_allows_only_the_copies_that_fit(monkeypatch) -> None:
     from pipeline import batch
 
-    monkeypatch.setattr(batch, "_available_ram", lambda: 10_000)
-    monkeypatch.setattr(batch, "_resident_ram", lambda: 2_000)
+    monkeypatch.setattr(batch, "_available_ram", lambda: 2 * 1024 * 1024 * 1024)
     assert batch._fit_workers(12, []) == 2
 
 
@@ -326,3 +324,104 @@ def test_failed_row_is_retried_and_a_success_is_kept(tmp_path: Path) -> None:
     assert lda["accuracy"] is not None
     assert naive["seconds"] == kept["seconds"]
     assert naive["accuracy"] == kept["accuracy"]
+
+
+def test_predictions_stay_in_the_file_and_leave_memory(tmp_path: Path) -> None:
+    import time
+
+    from pipeline.batch import _load_snapshot, _store_row
+    from pipeline.batch import _empty_snapshot
+
+    snapshot = _empty_snapshot()
+    snapshot["_row_offsets"] = {}
+    row = {
+        "dataset": "shuqfa2024",
+        "spatial": "none",
+        "alignment": "none",
+        "features": "csp",
+        "evaluation": "nested",
+        "classifier": "lda",
+        "participants": 2,
+        "accuracy": 0.8,
+        "detail": "",
+        "folds": [],
+        "metrics": {"balanced_accuracy": 0.8},
+        "confusion_labels": ["left", "right"],
+        "confusion_matrix": [[1, 0], [0, 1]],
+        "seconds": 1.0,
+        "error": "",
+        "predictions": [{"trial_id": "a", "label": "left", "predicted": "right"}],
+    }
+    destination = tmp_path / "batch.json"
+    _store_row(snapshot, row, destination, 0.0, time.perf_counter(), None)
+    assert "predictions" not in snapshot["results"][0]
+    saved = json.loads(destination.read_text(encoding="utf-8"))
+    assert saved["finished"] is False
+    assert saved["results"][0]["predictions"] == [
+        {"trial_id": "a", "label": "left", "predicted": "right"}
+    ]
+    again = _load_snapshot(destination)
+    assert "predictions" not in again["results"][0]
+    assert again["results"][0]["accuracy"] == 0.8
+    _store_row(again, again["results"][0], destination, 0.0, time.perf_counter(), None)
+    reloaded = json.loads(destination.read_text(encoding="utf-8"))
+    assert reloaded["results"][0]["predictions"][0]["trial_id"] == "a"
+
+
+def test_fresh_worker_scores_the_shared_cohort(tmp_path: Path) -> None:
+    from pipeline.batch import _linux_executor, _run_forked_job
+    from pipeline.batch_share import publish_cohort
+    from pipeline.features.cache import clear, prepare
+    from pipeline.params import ModelParams
+
+    service = _service(tmp_path)
+    cohort = service.load_cohort(
+        dataset="shuqfa2024",
+        notch_hz=50,
+        band_low_hz=8,
+        band_high_hz=30,
+        order=4,
+        spatial="none",
+        alignment="none",
+    )
+    prepare(cohort["groups"], float(cohort["rate"]), cohort["channels"])
+    published = publish_cohort(cohort)
+    clear()
+    payload = ("csp", "cross_validation", "lda", ModelParams(), None)
+    try:
+        with _linux_executor(2, published.spec) as pool:
+            row = pool.submit(_run_forked_job, payload).result(timeout=60)
+    finally:
+        published.close()
+        clear()
+    assert row["error"] == ""
+    assert row["accuracy"] > 0.5
+    assert row["participants"] == 2
+
+
+def test_shared_trials_keep_the_descriptor_cache(tmp_path: Path) -> None:
+    from pipeline.batch_share import attach_cohort, publish_cohort
+    from pipeline.features.cache import clear, covariance_of, prepare
+
+    service = _service(tmp_path)
+    cohort = service.load_cohort(
+        dataset="shuqfa2024",
+        notch_hz=50,
+        band_low_hz=8,
+        band_high_hz=30,
+        order=4,
+        spatial="none",
+        alignment="none",
+    )
+    prepare(cohort["groups"], float(cohort["rate"]), cohort["channels"])
+    published = publish_cohort(cohort)
+    try:
+        attached = attach_cohort(published.spec)
+        original = cohort["groups"][0].trials[0]
+        shared = attached["groups"][0].trials[0]
+        assert np.allclose(original, shared)
+        assert shared.flags.writeable is False
+        assert covariance_of(shared) is not None
+    finally:
+        clear()
+        published.close()

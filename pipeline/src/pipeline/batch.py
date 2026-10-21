@@ -8,7 +8,9 @@ launch keeps rows that succeeded and retries rows that failed.
 
 from __future__ import annotations
 
+import contextvars
 import csv
+import ctypes
 import gc
 import json
 import sys
@@ -32,8 +34,13 @@ DATASETS = ("shuqfa2024", "liu2024_stroke")
 DEFAULT_FEATURES = ("ts", "tdp", "psd", "csp", "fbcsp")
 DEFAULT_EVALUATIONS = ("nested",)
 ALIGNMENTS = ("none", "euclidean")
-# The forked workers read this cohort. The arrays stay shared on Linux.
+# Fresh workers attach this cohort from shared memory. It is not inherited.
 _ACTIVE: dict[str, Any] = {}
+_WORKER_BYTES = 512 * 1024 * 1024
+_SPILL: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "batch_row_spill",
+    default=None,
+)
 METRIC_COLUMNS = (
     "balanced_accuracy",
     "accuracy",
@@ -172,6 +179,7 @@ def run_batch(
                 workers=pool,
             )
             load_seconds = round(time.perf_counter() - loaded, 3)
+            _release_ram()
         except (ValueError, RuntimeError, OSError) as exc:
             _remember_dataset(snapshot, dataset, None, 0, str(exc))
             _checkpoint(output, snapshot, prior, started)
@@ -220,6 +228,8 @@ def run_batch(
                     )
                 ]
                 if not pending:
+                    derived = None
+                    _release_ram()
                     continue
                 from pipeline.features.cache import clear, prepare
 
@@ -245,7 +255,8 @@ def run_batch(
                     )
                 finally:
                     clear()
-                    gc.collect()
+                    derived = None
+                    _release_ram()
     snapshot["finished"] = _all_done(chosen, spatials, alignments, jobs, snapshot["results"])
     if snapshot["finished"]:
         snapshot["finished_at"] = _now()
@@ -409,14 +420,20 @@ def _score_pending(
             )
             _store_row(snapshot, row, output, prior, started, on_result)
         return
-    _ACTIVE["cohort"] = cohort
-    from threadpoolctl import threadpool_limits
+    from pipeline.batch_share import publish_cohort
+    from pipeline.features.cache import clear
 
+    published = publish_cohort(cohort)
+    clear()
+    # The private spatial copy can go. Workers read the shared block.
+    old_groups = cohort["groups"]
+    cohort["groups"] = published.groups
+    published.groups = []
+    del old_groups
+    _release_ram()
     finished_jobs: set[tuple[str, str, str]] = set()
     try:
-        with threadpool_limits(limits=1):
-            pass
-        with _linux_executor(min(workers, len(payloads))) as executor:
+        with _linux_executor(min(workers, len(payloads)), published.spec) as executor:
             waiting = {executor.submit(_run_forked_job, payload): payload for payload in payloads}
             for finished in as_completed(waiting):
                 feature, scheme, classifier, _params, _manifest = waiting[finished]
@@ -439,13 +456,23 @@ def _score_pending(
                 on_result,
             )
     finally:
+        cohort["groups"] = []
+        published.close()
         _ACTIVE.clear()
+        _release_ram()
+
+
+def _attach_shared_cohort(spec: dict[str, Any]) -> None:
+    """Map the shared trials into one fresh worker."""
+    from pipeline.batch_share import attach_cohort
+
+    _ACTIVE["cohort"] = attach_cohort(spec)
 
 
 def _run_forked_job(
     payload: tuple[str, str, str, ModelParams | None, dict[str, Any] | None],
 ) -> dict[str, Any]:
-    """One pipeline in a forked process. Algebra stays on a single thread."""
+    """One pipeline in a fresh process. Algebra stays on a single thread."""
     feature, scheme, classifier, params, manifest = payload
     from threadpoolctl import threadpool_limits
 
@@ -469,10 +496,14 @@ def _store_row(
     started: float,
     on_result: Callable[[dict[str, Any]], None] | None,
 ) -> None:
-    _upsert(snapshot["results"], row)
+    stored = row
+    if output is not None and "predictions" in row:
+        _append_full_row(output, snapshot, row)
+        stored = _slim(row)
+    _upsert(snapshot["results"], stored)
     _checkpoint(output, snapshot, prior, started)
     if on_result is not None:
-        on_result(row)
+        on_result(stored)
 
 
 def _failed_row(
@@ -495,15 +526,19 @@ def _failed_row(
 
 
 def _use_processes(workers: int) -> bool:
-    """Fork shares the loaded trials. macOS does not fork this stack safely."""
+    """Fresh workers share the trials. macOS keeps this stack in one process."""
     return workers > 1 and sys.platform == "linux"
 
 
-def _linux_executor(workers: int) -> ProcessPoolExecutor:
-    """One process per pipeline. The fork start method cannot recycle workers."""
+def _linux_executor(workers: int, spec: dict[str, Any] | None = None) -> ProcessPoolExecutor:
+    """One process per pipeline. Each worker is a fresh interpreter."""
     from multiprocessing import get_context
 
-    return ProcessPoolExecutor(max_workers=workers, mp_context=get_context("fork"))
+    kwargs: dict[str, Any] = {"max_workers": workers, "mp_context": get_context("forkserver")}
+    if spec is not None:
+        kwargs["initializer"] = _attach_shared_cohort
+        kwargs["initargs"] = (spec,)
+    return ProcessPoolExecutor(**kwargs)
 
 
 def _score_job(
@@ -747,10 +782,108 @@ def _checkpoint(
         return
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(json.dumps(snapshot, indent=2), encoding="utf-8")
-    temporary.replace(destination)
+    _write_checkpoint_file(destination, snapshot)
     _write_table(destination.with_name(f"{destination.stem}-comparison.csv"), snapshot["ranking"])
+    if snapshot.get("finished"):
+        _rows_path(destination).unlink(missing_ok=True)
+        snapshot["_row_offsets"] = {}
+
+
+def _write_checkpoint_file(path: Path, snapshot: dict[str, Any]) -> None:
+    """Write the snapshot. Prediction rows are copied from the spill file."""
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    offsets = snapshot.get("_row_offsets") or {}
+    rows_path = _rows_path(path)
+    header_keys = (
+        "finished",
+        "started_at",
+        "updated_at",
+        "finished_at",
+        "elapsed_seconds",
+        "datasets",
+        "manifests",
+    )
+    results = list(snapshot.get("results") or [])
+    with temporary.open("w", encoding="utf-8") as out:
+        out.write("{\n")
+        for key in header_keys:
+            out.write(f"  {json.dumps(key)}: {json.dumps(snapshot.get(key))},\n")
+        out.write('  "results": [\n')
+        if rows_path.is_file() and offsets:
+            with rows_path.open("rb") as src:
+                for index, row in enumerate(results):
+                    _write_result_line(out, src, offsets, row, last=index == len(results) - 1)
+        else:
+            for index, row in enumerate(results):
+                suffix = "\n" if index == len(results) - 1 else ",\n"
+                out.write("    " + json.dumps(row) + suffix)
+        out.write("  ],\n")
+        out.write(f'  "ranking": {json.dumps(snapshot.get("ranking") or [])}\n')
+        out.write("}\n")
+    temporary.replace(path)
+
+
+def _write_result_line(
+    out: Any,
+    src: Any,
+    offsets: dict[tuple[str, ...], int],
+    row: dict[str, Any],
+    *,
+    last: bool,
+) -> None:
+    offset = offsets.get(_job_key(row))
+    if offset is None:
+        text = json.dumps(row)
+    else:
+        src.seek(offset)
+        text = src.readline().decode("utf-8").strip()
+    out.write("    " + text + ("\n" if last else ",\n"))
+
+
+def _rows_path(path: Path) -> Path:
+    return path.with_name(path.name + ".rows.jsonl")
+
+
+def _job_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, str]:
+    return (
+        str(row.get("dataset") or ""),
+        str(row.get("spatial") or "none"),
+        str(row.get("alignment") or "none"),
+        str(row.get("features") or ""),
+        str(row.get("evaluation") or ""),
+        str(row.get("classifier") or ""),
+    )
+
+
+def _slim(row: dict[str, Any]) -> dict[str, Any]:
+    """Drop per-trial predictions. The spill file keeps them for the checkpoint."""
+    if "predictions" not in row:
+        return row
+    slim = dict(row)
+    slim.pop("predictions", None)
+    return slim
+
+
+def _append_full_row(path: Path, snapshot: dict[str, Any], row: dict[str, Any]) -> None:
+    destination = _rows_path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(row, separators=(",", ":")).encode("utf-8") + b"\n"
+    with destination.open("ab") as handle:
+        offset = handle.tell()
+        handle.write(payload)
+    snapshot.setdefault("_row_offsets", {})[_job_key(row)] = offset
+
+
+def _spill_hook(data: dict[str, Any]) -> dict[str, Any]:
+    state = _SPILL.get()
+    if state is None or "predictions" not in data or "classifier" not in data or "features" not in data:
+        return data
+    handle = state["handle"]
+    offset = handle.tell()
+    handle.write(json.dumps(data, separators=(",", ":")).encode("utf-8") + b"\n")
+    state["offsets"][_job_key(data)] = offset
+    data.pop("predictions", None)
+    return data
 
 
 def _write_table(path: Path, rows: Sequence[dict[str, Any]]) -> None:
@@ -784,17 +917,45 @@ def _write_table(path: Path, rows: Sequence[dict[str, Any]]) -> None:
 
 def _load_snapshot(path: Path | None) -> dict[str, Any]:
     snapshot = _empty_snapshot()
+    snapshot["_row_offsets"] = {}
     if path is None or not Path(path).is_file():
         return snapshot
-    loaded = json.loads(Path(path).read_text(encoding="utf-8"))
+    destination = Path(path)
+    rows_path = _rows_path(destination)
+    rows_path.parent.mkdir(parents=True, exist_ok=True)
+    offsets: dict[tuple[str, str, str, str, str, str], int] = {}
+    with rows_path.open("wb") as handle:
+        state = {"handle": handle, "offsets": offsets}
+        token = _SPILL.set(state)
+        try:
+            with destination.open(encoding="utf-8") as source:
+                loaded = json.load(source, object_hook=_spill_hook)
+        finally:
+            _SPILL.reset(token)
     if not isinstance(loaded, dict):
         return snapshot
     snapshot["started_at"] = str(loaded.get("started_at") or snapshot["started_at"])
     snapshot["elapsed_seconds"] = float(loaded.get("elapsed_seconds") or 0)
+    snapshot["finished"] = bool(loaded.get("finished") or False)
+    snapshot["finished_at"] = str(loaded.get("finished_at") or "")
     snapshot["datasets"] = list(loaded.get("datasets") or [])
     snapshot["results"] = list(loaded.get("results") or [])
     snapshot["manifests"] = dict(loaded.get("manifests") or {})
+    snapshot["_row_offsets"] = offsets
+    del loaded
+    _release_ram()
     return snapshot
+
+
+def _release_ram() -> None:
+    """Return free allocator pages so the next worker budget sees the real resident size."""
+    gc.collect()
+    if not sys.platform.startswith("linux"):
+        return
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (OSError, AttributeError):
+        return
 
 
 def _empty_snapshot() -> dict[str, Any]:
@@ -931,34 +1092,21 @@ def _fail_variant(
 
 
 def _fit_workers(requested: int, groups: Sequence[SubjectTrials]) -> int:
-    """Cap forked workers so a private copy of this process still fits in RAM.
+    """How many fresh workers fit beside one shared copy of the trials.
 
-    Copy-on-write breaks once a worker touches a Python object, so each
-    process can grow to about the parent's resident size, not just the trials.
+    Each worker is a new interpreter. It attaches the shared block instead of
+    copying this process, and keeps a private working set for one model.
     """
     count = max(1, int(requested))
     available = _available_ram()
-    resident = _resident_ram()
-    if available is None or resident is None or resident <= 0:
+    if available is None:
         return count
-    copies = int((available * 0.5) / resident)
     trial_bytes = sum(int(np.asarray(trial).nbytes) for group in groups for trial in group.trials)
-    if trial_bytes > 0:
-        copies = min(copies, int((available * 0.5) / trial_bytes))
+    room = int(available * 0.5)
+    if trial_bytes > room:
+        return 1
+    copies = room // _WORKER_BYTES
     return max(1, min(count, copies))
-
-
-def _resident_ram() -> int | None:
-    """Resident size of this process. Forked workers can each grow to about this."""
-    if not sys.platform.startswith("linux"):
-        return None
-    try:
-        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
-            if line.startswith("VmRSS:"):
-                return int(line.split()[1]) * 1024
-    except (OSError, IndexError, ValueError):
-        return None
-    return None
 
 
 def _available_ram() -> int | None:
