@@ -297,7 +297,16 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     offline_export_p.add_argument("--name", default=None, help="Mode name when not using --config")
     offline_export_p.add_argument("--dataset", default=None)
-    offline_export_p.add_argument("--subject", default=None)
+    offline_export_p.add_argument(
+        "--subject",
+        default=None,
+        help="Legacy alias for --online-subject (verification subject only)",
+    )
+    offline_export_p.add_argument(
+        "--online-subject",
+        default=None,
+        help="Subject used later for online verification (training uses all subjects)",
+    )
     offline_export_p.add_argument("--session-dir", default=None)
     offline_export_p.add_argument(
         "--classifiers",
@@ -305,6 +314,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Comma-separated classifiers (default: linear_svm,logistic_regression)",
     )
     offline_export_p.add_argument("--control-classifier", default=None)
+    offline_export_p.add_argument(
+        "--cross-subject",
+        dest="cross_subject",
+        action="store_true",
+        default=True,
+        help="Train on all subjects (default)",
+    )
+    offline_export_p.add_argument(
+        "--single-subject",
+        dest="cross_subject",
+        action="store_false",
+        help="Legacy smoke: train on --online-subject / --subject only",
+    )
     offline_export_p.add_argument("--notch", type=float, default=50.0)
     offline_export_p.add_argument("--band-low", type=float, default=8.0)
     offline_export_p.add_argument("--band-high", type=float, default=30.0)
@@ -704,10 +726,17 @@ def _cmd_online_replay(args: argparse.Namespace) -> int:
         entry = registry.get(args.registry)
         model = registry.load_model(args.registry)
         dataset = str(entry.offline.get("dataset") or args.dataset)
-        subject = args.subject or str(entry.offline.get("subject") or "") or None
+        subject = (
+            args.subject
+            or str(entry.offline.get("online_subject") or "")
+            or str(entry.offline.get("subject") or "")
+            or None
+        )
         session_dir = args.session_dir or str(entry.offline.get("session_dir") or "") or None
+        n_train = entry.offline.get("n_train_subjects")
         print(
-            f"Replay registry {entry.id} · dataset={dataset} · subject={subject or '-'} · "
+            f"Replay registry {entry.id} · dataset={dataset} · "
+            f"online_subject={subject or '-'} · n_train={n_train} · "
             f"heads={list(model.classifier_names)}",
             flush=True,
         )
@@ -748,11 +777,13 @@ def _cmd_offline_export(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
                 return 2
+            online_subject = args.online_subject or args.subject
             modes = [
                 OfflineModeSpec(
                     name=args.name,
                     dataset=args.dataset,
-                    subject=args.subject,
+                    online_subject=online_subject,
+                    subject=online_subject,
                     session_dir=args.session_dir,
                     classifiers=tuple(
                         part.strip()
@@ -760,6 +791,7 @@ def _cmd_offline_export(args: argparse.Namespace) -> int:
                         if part.strip()
                     ),
                     control_classifier=args.control_classifier,
+                    cross_subject=bool(args.cross_subject),
                     notch_hz=args.notch,
                     band_low_hz=args.band_low,
                     band_high_hz=args.band_high,
@@ -781,10 +813,13 @@ def _cmd_offline_export(args: argparse.Namespace) -> int:
             f"{name}={acc:.0%}" if acc is not None else f"{name}=n/a"
             for name, acc in entry.offline_accuracies.items()
         )
+        n_train = entry.offline.get("n_train_subjects")
+        verify = entry.offline.get("online_subject") or entry.offline.get("subject") or "-"
         print(
             f"registered {entry.id} · name={entry.name} · "
             f"dataset={entry.offline.get('dataset')} · "
-            f"subject={entry.offline.get('subject') or '-'} · "
+            f"cross_subject={entry.offline.get('cross_subject')} · "
+            f"n_train={n_train} · online_subject={verify} · "
             f"heads={entry.classifiers} · offline=[{offline}]",
             flush=True,
         )
@@ -808,7 +843,10 @@ def _cmd_offline_list(args: argparse.Namespace) -> int:
         entries = [
             item
             for item in entries
-            if str(item.offline.get("subject") or "") == str(args.subject)
+            if str(
+                item.offline.get("online_subject") or item.offline.get("subject") or ""
+            )
+            == str(args.subject)
         ]
     if not entries:
         print("No registered offline models.")
@@ -818,9 +856,13 @@ def _cmd_offline_list(args: argparse.Namespace) -> int:
             f"{name}={acc:.0%}" if acc is not None else f"{name}=n/a"
             for name, acc in entry.offline_accuracies.items()
         )
+        verify = entry.offline.get("online_subject") or entry.offline.get("subject") or "-"
+        n_train = entry.offline.get("n_train_subjects")
+        xs = "xs" if entry.offline.get("cross_subject") else "ss"
         print(
             f"{entry.id}\t{entry.name}\t"
-            f"{entry.offline.get('dataset')}/{entry.offline.get('subject') or '-'}\t"
+            f"{entry.offline.get('dataset')}/online={verify}"
+            f"{f'/n_train={n_train}' if n_train is not None else ''}/{xs}\t"
             f"{','.join(entry.classifiers)}\t[{offline}]"
         )
     return 0
@@ -857,10 +899,17 @@ def _cmd_online_sim(args: argparse.Namespace) -> int:
                 entry = registry.latest(dataset=args.dataset, subject=args.subject)
                 model = registry.load_model(entry.id)
             dataset = str(entry.offline.get("dataset") or dataset)
-            subject = str(entry.offline.get("subject") or "") or subject
+            subject = (
+                subject
+                or str(entry.offline.get("online_subject") or "")
+                or str(entry.offline.get("subject") or "")
+                or None
+            )
             session_dir = str(entry.offline.get("session_dir") or "") or session_dir
             print(
                 f"Loaded registry {entry.id} · name={entry.name} · "
+                f"online_subject={subject or '-'} · "
+                f"n_train={entry.offline.get('n_train_subjects')} · "
                 f"heads={list(model.classifier_names)}",
                 flush=True,
             )
@@ -914,10 +963,12 @@ def _cmd_online_sim(args: argparse.Namespace) -> int:
                     OfflineModeSpec(
                         name=reg_name,
                         dataset=dataset,
+                        online_subject=subject,
                         subject=subject,
                         session_dir=session_dir,
                         classifiers=tuple(model.classifier_names),
                         control_classifier=model.control_name,
+                        cross_subject=bool((model.meta or {}).get("cross_subject", True)),
                         notch_hz=args.notch,
                         band_low_hz=args.band_low,
                         band_high_hz=args.band_high,

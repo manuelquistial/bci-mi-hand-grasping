@@ -35,16 +35,23 @@ _ID_SAFE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 @dataclass(frozen=True)
 class OfflineModeSpec:
-    """One offline training mode the user asks to export for online use."""
+    """One offline training mode the user asks to export for online use.
+
+    Training is cross-subject by default (all participants). ``online_subject``
+    (or legacy ``subject``) is only the participant used later for online
+    verification replay.
+    """
 
     name: str
     dataset: str
     subject: str | None = None
+    online_subject: str | None = None
     session_dir: str | None = None
     classifiers: tuple[str, ...] = ("linear_svm", "logistic_regression")
     control_classifier: str | None = None
     alignment: str = "euclidean"
     features: str = "csp"
+    cross_subject: bool = True
     notch_hz: float = 50.0
     band_low_hz: float = 8.0
     band_high_hz: float = 30.0
@@ -52,6 +59,9 @@ class OfflineModeSpec:
     notch_q: float = 30.0
     csp_pairs: int = 2
     regularization_c: float = 1.0
+
+    def verification_subject(self) -> str | None:
+        return self.online_subject or self.subject
 
     def filter_spec(self) -> FilterSpec:
         return FilterSpec(
@@ -173,7 +183,8 @@ class OnlineModelRegistry:
             matches = [
                 item
                 for item in matches
-                if str(item.offline.get("subject") or "") == str(subject)
+                if str(item.offline.get("online_subject") or item.offline.get("subject") or "")
+                == str(subject)
             ]
         if not matches:
             raise FileNotFoundError("No registered offline model matches the filters")
@@ -205,7 +216,9 @@ class OnlineModelRegistry:
             created_at=datetime.now(timezone.utc).isoformat(),
             offline={
                 "dataset": spec.dataset,
-                "subject": spec.subject or "",
+                "subject": spec.verification_subject() or "",
+                "online_subject": spec.verification_subject() or "",
+                "cross_subject": spec.cross_subject,
                 "session_dir": spec.session_dir or "",
                 "alignment": spec.alignment,
                 "features": spec.features,
@@ -214,6 +227,8 @@ class OnlineModelRegistry:
                 "filter": asdict(spec.filter_spec()),
                 "csp_pairs": spec.csp_pairs,
                 "regularization_c": spec.regularization_c,
+                "n_train_subjects": (model.meta or {}).get("n_train_subjects"),
+                "train_subjects": (model.meta or {}).get("train_subjects"),
             },
             offline_accuracies=dict(model.offline_accuracies),
             channel_count=model.channel_count,
@@ -316,10 +331,14 @@ def mode_spec_from_dict(raw: dict[str, Any]) -> OfflineModeSpec:
     else:
         names = parse_classifier_names([str(item) for item in classifiers])
     filt = raw.get("filter") if isinstance(raw.get("filter"), dict) else {}
+    online = raw.get("online_subject")
+    if online in (None, ""):
+        online = raw.get("subject")
     return OfflineModeSpec(
         name=name,
         dataset=dataset,
         subject=(None if raw.get("subject") in (None, "") else str(raw.get("subject"))),
+        online_subject=(None if online in (None, "") else str(online)),
         session_dir=(
             None if raw.get("session_dir") in (None, "") else str(raw.get("session_dir"))
         ),
@@ -331,6 +350,7 @@ def mode_spec_from_dict(raw: dict[str, Any]) -> OfflineModeSpec:
         ),
         alignment=str(raw.get("alignment") or "euclidean"),
         features=str(raw.get("features") or "csp"),
+        cross_subject=bool(raw.get("cross_subject", True)),
         notch_hz=float(filt.get("notch_hz", raw.get("notch_hz", 50.0))),
         notch_q=float(filt.get("notch_q", raw.get("notch_q", 30.0))),
         band_low_hz=float(filt.get("band_low_hz", raw.get("band_low_hz", 8.0))),
@@ -347,6 +367,8 @@ def export_offline_modes(
     registry: OnlineModelRegistry | None = None,
     replace: bool = False,
     trial_loader: Any | None = None,
+    subject_lister: Any | None = None,
+    workers: int = 4,
 ) -> list[RegistryEntry]:
     """Train each offline mode and register the frozen model for online use."""
     from pipeline.online.dataset_model import train_frozen_from_dataset
@@ -357,6 +379,7 @@ def export_offline_modes(
         model = train_frozen_from_dataset(
             dataset=spec.dataset,
             subject=spec.subject,
+            online_subject=spec.verification_subject(),
             session_dir=spec.session_dir,
             classifier_names=spec.resolved_classifiers(),
             control_classifier=spec.control_classifier,
@@ -364,6 +387,9 @@ def export_offline_modes(
             csp_pairs=spec.csp_pairs,
             regularization_c=spec.regularization_c,
             trial_loader=trial_loader,
+            subject_lister=subject_lister,
+            cross_subject=spec.cross_subject,
+            workers=workers,
         )
         entry = store.register(model, spec, replace=replace)
         exported.append(entry)

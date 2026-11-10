@@ -41,21 +41,34 @@ def test_export_and_load_from_registry(tmp_path: Path) -> None:
         del kwargs
         return bundle
 
+    def lister(project, dataset_id):
+        del project, dataset_id
+        return [{"id": "S1"}, {"id": "S2"}]
+
     registry = OnlineModelRegistry(tmp_path / "online-models")
     modes = [
         OfflineModeSpec(
             name="demo-svm-lr",
             dataset="shuqfa2024",
-            subject="S1",
+            online_subject="S1",
+            cross_subject=True,
             classifiers=("linear_svm", "logistic_regression"),
             control_classifier="linear_svm",
         )
     ]
-    entries = export_offline_modes(modes, registry=registry, trial_loader=loader)
+    entries = export_offline_modes(
+        modes,
+        registry=registry,
+        trial_loader=loader,
+        subject_lister=lister,
+    )
     assert len(entries) == 1
     entry = entries[0]
     assert entry.name == "demo-svm-lr"
     assert entry.classifiers == ["linear_svm", "logistic_regression"]
+    assert entry.offline.get("cross_subject") is True
+    assert entry.offline.get("online_subject") == "S1"
+    assert entry.offline.get("n_train_subjects") == 2
     assert (registry.root / entry.id / "model.joblib").exists()
     assert (registry.root / entry.id / "manifest.json").exists()
     assert registry.index_path.exists()
@@ -64,6 +77,7 @@ def test_export_and_load_from_registry(tmp_path: Path) -> None:
     assert listed[0].id == entry.id
     loaded = registry.load_model(entry.id)
     assert loaded.classifier_names == ("linear_svm", "logistic_regression")
+    assert loaded.meta.get("n_train_subjects") == 2
     by_name = registry.load_model("demo-svm-lr")
     assert by_name.channel_count == loaded.channel_count
     latest = registry.latest(dataset="shuqfa2024", subject="S1")
@@ -95,7 +109,11 @@ def test_load_offline_modes_config(tmp_path: Path) -> None:
     modes = load_offline_modes(path)
     assert [mode.name for mode in modes] == ["a", "b"]
     assert modes[0].resolved_classifiers() == ("linear_svm",)
+    assert modes[0].online_subject == "S1"
+    assert modes[0].cross_subject is True
     assert modes[1].resolved_classifiers() == ("logistic_regression",)
+    assert modes[1].online_subject is None
+    assert modes[1].cross_subject is True
 
 
 def test_register_single_trained_model(tmp_path: Path) -> None:

@@ -102,10 +102,12 @@ def test_train_frozen_from_dataset_loader() -> None:
         classifier_name="logistic_regression",
         trial_loader=loader,
         filter=FilterSpec(),
+        cross_subject=False,
     )
     assert model.channel_count == 8
     assert model.offline_accuracy is not None
     assert model.meta["dataset"] == "shuqfa2024"
+    assert model.meta["cross_subject"] is False
 
 
 def test_simulator_session_classifies_streamed_windows(tmp_path: Path) -> None:
