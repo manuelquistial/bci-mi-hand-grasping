@@ -199,6 +199,130 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Exact LSL name (default: first stream of type EEG)",
     )
+
+    online_p = sub.add_parser(
+        "online-sim",
+        help="Play a dataset on the simulator and classify each imagery window online",
+    )
+    online_p.add_argument(
+        "--dataset",
+        default="shuqfa2024",
+        help="Dataset id for the simulator (default: shuqfa2024)",
+    )
+    online_p.add_argument("--subject", default=None, help="Participant id (default: first listed)")
+    online_p.add_argument(
+        "--session-dir",
+        default=None,
+        help="Recorded session folder when dataset=recorded_session",
+    )
+    online_p.add_argument(
+        "--classifiers",
+        default="linear_svm,logistic_regression",
+        help=(
+            "Comma-separated frozen heads scored on every window "
+            "(default: linear_svm,logistic_regression)"
+        ),
+    )
+    online_p.add_argument(
+        "--classifier",
+        default=None,
+        choices=("linear_svm", "logistic_regression"),
+        help="Single classifier (alias). Overrides --classifiers when set",
+    )
+    online_p.add_argument(
+        "--control-classifier",
+        default=None,
+        help="Which head drives the stability gate / avatar (default: first listed)",
+    )
+    online_p.add_argument(
+        "--model",
+        default=None,
+        help="Path to a saved frozen model (.joblib). When omitted, train from the dataset",
+    )
+    online_p.add_argument(
+        "--registry",
+        default=None,
+        help="Load a registered offline export by id or name (from pipeline offline-export)",
+    )
+    online_p.add_argument(
+        "--registry-latest",
+        action="store_true",
+        help="Load the latest registered offline export (optionally filtered by --dataset/--subject)",
+    )
+    online_p.add_argument(
+        "--save-model",
+        default=None,
+        help="Where to write the frozen model after training",
+    )
+    online_p.add_argument(
+        "--register",
+        action="store_true",
+        help="After training, also register the model under online-models/ for later online runs",
+    )
+    online_p.add_argument(
+        "--register-as",
+        default=None,
+        help="Name used when --register is set (default: <dataset>-<subject>-online)",
+    )
+
+    offline_export_p = sub.add_parser(
+        "offline-export",
+        help="Train offline mode(s) and register frozen models for online-sim",
+    )
+    offline_export_p.add_argument(
+        "--config",
+        default=None,
+        help="JSON file with one mode or {modes: [...]} offline recipes",
+    )
+    offline_export_p.add_argument("--name", default=None, help="Mode name when not using --config")
+    offline_export_p.add_argument("--dataset", default=None)
+    offline_export_p.add_argument("--subject", default=None)
+    offline_export_p.add_argument("--session-dir", default=None)
+    offline_export_p.add_argument(
+        "--classifiers",
+        default="linear_svm,logistic_regression",
+        help="Comma-separated classifiers (default: linear_svm,logistic_regression)",
+    )
+    offline_export_p.add_argument("--control-classifier", default=None)
+    offline_export_p.add_argument("--notch", type=float, default=50.0)
+    offline_export_p.add_argument("--band-low", type=float, default=8.0)
+    offline_export_p.add_argument("--band-high", type=float, default=30.0)
+    offline_export_p.add_argument("--order", type=int, default=4)
+    offline_export_p.add_argument("--csp-pairs", type=int, default=2)
+    offline_export_p.add_argument(
+        "--registry-root",
+        default=None,
+        help="Registry directory (default: pipeline/online-models)",
+    )
+    offline_export_p.add_argument(
+        "--replace",
+        action="store_true",
+        help="Overwrite an existing registry id with the same name stamp collision",
+    )
+
+    offline_list_p = sub.add_parser(
+        "offline-list",
+        help="List offline models registered for online use",
+    )
+    offline_list_p.add_argument(
+        "--registry-root",
+        default=None,
+        help="Registry directory (default: pipeline/online-models)",
+    )
+    offline_list_p.add_argument("--dataset", default=None, help="Filter by dataset id")
+    offline_list_p.add_argument("--subject", default=None, help="Filter by subject id")
+    online_p.add_argument("--max-trials", type=int, default=None, help="Stop after N hand trials")
+    online_p.add_argument(
+        "--log",
+        default=None,
+        help="JSONL path for per-window decisions (default: batch-results/online-<stamp>.jsonl)",
+    )
+    online_p.add_argument("--wait", type=float, default=8.0, help="LSL discover timeout")
+    online_p.add_argument("--notch", type=float, default=50.0)
+    online_p.add_argument("--band-low", type=float, default=8.0)
+    online_p.add_argument("--band-high", type=float, default=30.0)
+    online_p.add_argument("--order", type=int, default=4)
+    online_p.add_argument("--csp-pairs", type=int, default=2)
     return parser
 
 
@@ -530,8 +654,233 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_paper_csp(args)
     if args.command == "record":
         return _cmd_record(args)
+    if args.command == "online-sim":
+        return _cmd_online_sim(args)
+    if args.command == "offline-export":
+        return _cmd_offline_export(args)
+    if args.command == "offline-list":
+        return _cmd_offline_list(args)
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def _cmd_offline_export(args: argparse.Namespace) -> int:
+    from pipeline.online.registry import (
+        OfflineModeSpec,
+        OnlineModelRegistry,
+        export_offline_modes,
+        load_offline_modes,
+    )
+
+    try:
+        if args.config:
+            modes = load_offline_modes(args.config)
+        else:
+            if not args.dataset or not args.name:
+                print(
+                    "error: provide --config, or both --name and --dataset",
+                    file=sys.stderr,
+                )
+                return 2
+            modes = [
+                OfflineModeSpec(
+                    name=args.name,
+                    dataset=args.dataset,
+                    subject=args.subject,
+                    session_dir=args.session_dir,
+                    classifiers=tuple(
+                        part.strip()
+                        for part in str(args.classifiers).split(",")
+                        if part.strip()
+                    ),
+                    control_classifier=args.control_classifier,
+                    notch_hz=args.notch,
+                    band_low_hz=args.band_low,
+                    band_high_hz=args.band_high,
+                    order=args.order,
+                    csp_pairs=args.csp_pairs,
+                )
+            ]
+        registry = OnlineModelRegistry(
+            Path(args.registry_root) if args.registry_root else None
+        )
+        print(f"Exporting {len(modes)} offline mode(s) → {registry.root}", flush=True)
+        entries = export_offline_modes(modes, registry=registry, replace=args.replace)
+    except (TimeoutError, ValueError, RuntimeError, FileNotFoundError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    for entry in entries:
+        offline = ", ".join(
+            f"{name}={acc:.0%}" if acc is not None else f"{name}=n/a"
+            for name, acc in entry.offline_accuracies.items()
+        )
+        print(
+            f"registered {entry.id} · name={entry.name} · "
+            f"dataset={entry.offline.get('dataset')} · "
+            f"subject={entry.offline.get('subject') or '-'} · "
+            f"heads={entry.classifiers} · offline=[{offline}]",
+            flush=True,
+        )
+    print(
+        "Use: uv run pipeline online-sim --registry <id-or-name>",
+        flush=True,
+    )
+    return 0
+
+
+def _cmd_offline_list(args: argparse.Namespace) -> int:
+    from pipeline.online.registry import OnlineModelRegistry
+
+    registry = OnlineModelRegistry(Path(args.registry_root) if args.registry_root else None)
+    entries = registry.list_entries()
+    if args.dataset:
+        entries = [
+            item for item in entries if str(item.offline.get("dataset") or "") == args.dataset
+        ]
+    if args.subject is not None:
+        entries = [
+            item
+            for item in entries
+            if str(item.offline.get("subject") or "") == str(args.subject)
+        ]
+    if not entries:
+        print("No registered offline models.")
+        return 0
+    for entry in entries:
+        offline = ", ".join(
+            f"{name}={acc:.0%}" if acc is not None else f"{name}=n/a"
+            for name, acc in entry.offline_accuracies.items()
+        )
+        print(
+            f"{entry.id}\t{entry.name}\t"
+            f"{entry.offline.get('dataset')}/{entry.offline.get('subject') or '-'}\t"
+            f"{','.join(entry.classifiers)}\t[{offline}]"
+        )
+    return 0
+
+
+def _cmd_online_sim(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
+    from pipeline.online.dataset_model import train_frozen_from_dataset
+    from pipeline.online.model import load_frozen_model, save_frozen_model
+    from pipeline.online.registry import OfflineModeSpec, OnlineModelRegistry
+    from pipeline.online.simulator_session import (
+        SimulatorOnlineConfig,
+        SimulatorOnlineSession,
+    )
+    from pipeline.preprocess import FilterSpec
+    from pipeline.service import default_recordings_root
+
+    log_path = Path(args.log) if args.log else (
+        default_recordings_root().parent
+        / "batch-results"
+        / f"online-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.jsonl"
+    )
+    try:
+        registry = OnlineModelRegistry()
+        dataset = args.dataset
+        subject = args.subject
+        session_dir = args.session_dir
+        if args.registry or args.registry_latest:
+            if args.registry:
+                entry = registry.get(args.registry)
+                model = registry.load_model(args.registry)
+            else:
+                entry = registry.latest(dataset=args.dataset, subject=args.subject)
+                model = registry.load_model(entry.id)
+            dataset = str(entry.offline.get("dataset") or dataset)
+            subject = str(entry.offline.get("subject") or "") or subject
+            session_dir = str(entry.offline.get("session_dir") or "") or session_dir
+            print(
+                f"Loaded registry {entry.id} · name={entry.name} · "
+                f"heads={list(model.classifier_names)}",
+                flush=True,
+            )
+        elif args.model:
+            model = load_frozen_model(args.model)
+            print(
+                f"Loaded frozen model from {args.model} · heads={list(model.classifier_names)}",
+                flush=True,
+            )
+        else:
+            classifiers = args.classifier or args.classifiers
+            print(
+                f"Training frozen [{classifiers}] on {dataset}"
+                + (f" / {subject}" if subject else "")
+                + "…",
+                flush=True,
+            )
+            model = train_frozen_from_dataset(
+                dataset=dataset,
+                subject=subject,
+                session_dir=session_dir,
+                classifier_names=None if args.classifier else args.classifiers,
+                classifier_name=args.classifier,
+                control_classifier=args.control_classifier,
+                filter=FilterSpec(
+                    notch_hz=args.notch,
+                    band_low_hz=args.band_low,
+                    band_high_hz=args.band_high,
+                    order=args.order,
+                ),
+                csp_pairs=args.csp_pairs,
+            )
+            offline = ", ".join(
+                f"{name}={acc:.0%}" if acc is not None else f"{name}=n/a"
+                for name, acc in model.offline_accuracies.items()
+            )
+            print(
+                f"Offline train accuracy: {offline} · "
+                f"{model.channel_count} ch · control={model.control_name} · {model.meta}",
+                flush=True,
+            )
+            if args.save_model:
+                saved = save_frozen_model(model, args.save_model)
+                print(f"Wrote frozen model to {saved}", flush=True)
+            if args.register:
+                reg_name = args.register_as or (
+                    f"{dataset}-{subject or 'all'}-online"
+                )
+                entry = registry.register(
+                    model,
+                    OfflineModeSpec(
+                        name=reg_name,
+                        dataset=dataset,
+                        subject=subject,
+                        session_dir=session_dir,
+                        classifiers=tuple(model.classifier_names),
+                        control_classifier=model.control_name,
+                        notch_hz=args.notch,
+                        band_low_hz=args.band_low,
+                        band_high_hz=args.band_high,
+                        order=args.order,
+                        csp_pairs=args.csp_pairs,
+                    ),
+                )
+                print(f"Registered offline export as {entry.id}", flush=True)
+
+        config = SimulatorOnlineConfig(
+            dataset=dataset,
+            subject=subject,
+            session_dir=session_dir,
+            wait_seconds=args.wait,
+            max_trials=args.max_trials,
+            log_path=log_path,
+        )
+        print(
+            f"Starting simulator playback → online windows → {list(model.classifier_names)}",
+            flush=True,
+        )
+        summary = SimulatorOnlineSession(model, config).run()
+    except (TimeoutError, ValueError, RuntimeError, FileNotFoundError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(json.dumps(summary, indent=2), flush=True)
+    print(f"Log: {log_path}", flush=True)
+    return 0
 
 
 if __name__ == "__main__":

@@ -1,0 +1,36 @@
+{
+  "modes": [
+    {
+      "name": "euclidean-csp-logistic_regression",
+      "dataset": "shuqfa2024",
+      "subject": null,
+      "alignment": "euclidean",
+      "features": "csp",
+      "classifiers": ["logistic_regression"],
+      "control_classifier": "logistic_regression",
+      "csp_pairs": 2,
+      "filter": {
+        "notch_hz": 50,
+        "band_low_hz": 8,
+        "band_high_hz": 30,
+        "order": 4
+      }
+    },
+    {
+      "name": "euclidean-csp-linear_svm",
+      "dataset": "shuqfa2024",
+      "subject": null,
+      "alignment": "euclidean",
+      "features": "csp",
+      "classifiers": ["linear_svm"],
+      "control_classifier": "linear_svm",
+      "csp_pairs": 2,
+      "filter": {
+        "notch_hz": 50,
+        "band_low_hz": 8,
+        "band_high_hz": 30,
+        "order": 4
+      }
+    }
+  ]
+}

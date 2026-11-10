@@ -12,5 +12,8 @@ recordings/
 # Batch scores from `pipeline batch`
 batch-results/
 
+# Frozen offline→online model registry
+online-models/
+
 # Virtual environments
 .venv
