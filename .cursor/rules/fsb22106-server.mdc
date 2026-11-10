@@ -1,0 +1,12 @@
+---
+description: Ask before any command or change on the shared fsb22106 HPC
+alwaysApply: true
+---
+
+# Servidor fsb22106
+
+The shared host is `fsb22106@login.hpc.strath.ac.uk` (login node `archie-w.hpc.strath.ac.uk`), including any SSH control socket for that account. Prefer `login`, not `lgin`.
+
+Do not run a command there, read remote files through SSH, upload, edit, install, or change anything on that machine until the user has agreed to that specific action in the current turn. Describe what would run and wait. A previous yes does not cover a later command.
+
+Update the project on that host with `git pull` inside the remote clone only. Never sync or copy the repo tree there with `scp`, `rsync`, or similar. SSH may still fetch generated results or logs after the user agrees; that is not a substitute for updating code.
