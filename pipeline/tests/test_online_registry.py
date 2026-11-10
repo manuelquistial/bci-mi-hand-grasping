@@ -68,7 +68,8 @@ def test_export_and_load_from_registry(tmp_path: Path) -> None:
     assert entry.classifiers == ["linear_svm", "logistic_regression"]
     assert entry.offline.get("cross_subject") is True
     assert entry.offline.get("online_subject") == "S1"
-    assert entry.offline.get("n_train_subjects") == 2
+    assert entry.offline.get("held_out_online_subject") is True
+    assert entry.offline.get("n_train_subjects") == 1
     assert (registry.root / entry.id / "model.joblib").exists()
     assert (registry.root / entry.id / "manifest.json").exists()
     assert registry.index_path.exists()
@@ -77,11 +78,45 @@ def test_export_and_load_from_registry(tmp_path: Path) -> None:
     assert listed[0].id == entry.id
     loaded = registry.load_model(entry.id)
     assert loaded.classifier_names == ("linear_svm", "logistic_regression")
-    assert loaded.meta.get("n_train_subjects") == 2
+    assert loaded.meta.get("n_train_subjects") == 1
+    assert loaded.meta.get("held_out_online_subject") is True
+    assert loaded.meta.get("train_subjects") == ["S2"]
     by_name = registry.load_model("demo-svm-lr")
     assert by_name.channel_count == loaded.channel_count
     latest = registry.latest(dataset="shuqfa2024", subject="S1")
     assert latest.id == entry.id
+
+
+def test_hold_out_matches_numeric_and_padded_ids(tmp_path: Path) -> None:
+    bundle = _bundle()
+
+    def loader(**kwargs):
+        del kwargs
+        return bundle
+
+    def lister(project, dataset_id):
+        del project, dataset_id
+        return [{"id": "S001"}, {"id": "S002"}]
+
+    registry = OnlineModelRegistry(tmp_path / "online-models-loso")
+    entries = export_offline_modes(
+        [
+            OfflineModeSpec(
+                name="loso-lr",
+                dataset="shuqfa2024",
+                online_subject="1",
+                cross_subject=True,
+                hold_out_online_subject=True,
+                classifiers=("logistic_regression",),
+            )
+        ],
+        registry=registry,
+        trial_loader=loader,
+        subject_lister=lister,
+    )
+    assert entries[0].offline.get("n_train_subjects") == 1
+    assert entries[0].offline.get("train_subjects") == ["S002"]
+    assert entries[0].offline.get("held_out_online_subject") is True
 
 
 def test_load_offline_modes_config(tmp_path: Path) -> None:

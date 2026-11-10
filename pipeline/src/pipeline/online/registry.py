@@ -38,8 +38,8 @@ class OfflineModeSpec:
     """One offline training mode the user asks to export for online use.
 
     Training is cross-subject by default (all participants). ``online_subject``
-    (or legacy ``subject``) is only the participant used later for online
-    verification replay.
+    (or legacy ``subject``) is the participant used later for online
+    verification replay and, by default, is held out of training.
     """
 
     name: str
@@ -52,6 +52,7 @@ class OfflineModeSpec:
     alignment: str = "euclidean"
     features: str = "csp"
     cross_subject: bool = True
+    hold_out_online_subject: bool = True
     notch_hz: float = 50.0
     band_low_hz: float = 8.0
     band_high_hz: float = 30.0
@@ -219,6 +220,10 @@ class OnlineModelRegistry:
                 "subject": spec.verification_subject() or "",
                 "online_subject": spec.verification_subject() or "",
                 "cross_subject": spec.cross_subject,
+                "hold_out_online_subject": spec.hold_out_online_subject,
+                "held_out_online_subject": (model.meta or {}).get(
+                    "held_out_online_subject"
+                ),
                 "session_dir": spec.session_dir or "",
                 "alignment": spec.alignment,
                 "features": spec.features,
@@ -351,6 +356,7 @@ def mode_spec_from_dict(raw: dict[str, Any]) -> OfflineModeSpec:
         alignment=str(raw.get("alignment") or "euclidean"),
         features=str(raw.get("features") or "csp"),
         cross_subject=bool(raw.get("cross_subject", True)),
+        hold_out_online_subject=bool(raw.get("hold_out_online_subject", True)),
         notch_hz=float(filt.get("notch_hz", raw.get("notch_hz", 50.0))),
         notch_q=float(filt.get("notch_q", raw.get("notch_q", 30.0))),
         band_low_hz=float(filt.get("band_low_hz", raw.get("band_low_hz", 8.0))),
@@ -389,6 +395,7 @@ def export_offline_modes(
             trial_loader=trial_loader,
             subject_lister=subject_lister,
             cross_subject=spec.cross_subject,
+            hold_out_online_subject=spec.hold_out_online_subject,
             workers=workers,
         )
         entry = store.register(model, spec, replace=replace)

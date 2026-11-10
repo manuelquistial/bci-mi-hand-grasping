@@ -1,20 +1,20 @@
 #!/bin/bash
-# Cross-subject offline + single-subject online verification on one Slurm allocation.
+# Cross-subject LOSO offline + held-out online verification on one Slurm allocation.
 #
-# Resource estimate (shuqfa2024, 103 subjects, run 02):
-#   offline-export ×2 : dump-trials all subjects, per-subject EA, CSP, LR/SVM
+# Resource estimate (shuqfa2024, 102 train subjects + 1 held out, run 02):
+#   offline-export ×2 : dump-trials cohort, per-subject EA, CSP, LR/SVM
 #                       ~30–90 min, ~8–20 GB peak with parallel dumps
-#   online-replay  ×2 : one verification subject (~123 s @ 160 Hz)
+#   online-replay  ×2 : held-out verification subject (~123 s @ 160 Hz)
 #                       ~1–5 min, <2 GB
 #   uv sync cold start: ~2–10 min
 #
 # Allocation (not exclusive): 8 CPUs, 32 GB, 4 h on `standard`.
 # Only this job's cores/RAM are reserved; other users keep their slots.
 #
-# Submit from pipeline/ after `git pull` on the login node:
+# Submit from pipeline/ after updating the remote clone:
 #   sbatch scripts/slurm_euclidean_csp.sbatch
 # Optional:
-#   ONLINE_SUBJECT=1 MAX_TRIALS=20 sbatch scripts/slurm_euclidean_csp.sbatch
+#   ONLINE_SUBJECT=S001 MAX_TRIALS=20 sbatch scripts/slurm_euclidean_csp.sbatch
 
 #SBATCH --job-name=eucl-csp-xs
 #SBATCH --account=parrarodriguez-eegpd
@@ -33,12 +33,12 @@ ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$ROOT"
 mkdir -p batch-results
 
-ONLINE_SUBJECT="${ONLINE_SUBJECT:-1}"
+ONLINE_SUBJECT="${ONLINE_SUBJECT:-S001}"
 DATASET="${DATASET:-shuqfa2024}"
 MAX_TRIALS="${MAX_TRIALS:-}"
 
 echo "host=$(hostname) job=${SLURM_JOB_ID:-local} cpus=${SLURM_CPUS_PER_TASK:-?} mem=32G"
-echo "train=all_subjects online_subject=${ONLINE_SUBJECT} dataset=${DATASET} max_trials=${MAX_TRIALS:-all}"
+echo "train=all_except_held_out hold_out=${ONLINE_SUBJECT} dataset=${DATASET} max_trials=${MAX_TRIALS:-all}"
 
 if [[ -n "$MAX_TRIALS" ]]; then
   bash scripts/run_fsb_euclidean_csp.sh "$ONLINE_SUBJECT" "$DATASET" "$MAX_TRIALS"

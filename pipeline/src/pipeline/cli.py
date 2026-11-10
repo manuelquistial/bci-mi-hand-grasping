@@ -792,6 +792,7 @@ def _cmd_offline_export(args: argparse.Namespace) -> int:
                     ),
                     control_classifier=args.control_classifier,
                     cross_subject=bool(args.cross_subject),
+                    hold_out_online_subject=bool(args.cross_subject),
                     notch_hz=args.notch,
                     band_low_hz=args.band_low,
                     band_high_hz=args.band_high,
@@ -815,11 +816,12 @@ def _cmd_offline_export(args: argparse.Namespace) -> int:
         )
         n_train = entry.offline.get("n_train_subjects")
         verify = entry.offline.get("online_subject") or entry.offline.get("subject") or "-"
+        held = entry.offline.get("held_out_online_subject")
         print(
             f"registered {entry.id} · name={entry.name} · "
             f"dataset={entry.offline.get('dataset')} · "
             f"cross_subject={entry.offline.get('cross_subject')} · "
-            f"n_train={n_train} · online_subject={verify} · "
+            f"held_out={held} · n_train={n_train} · online_subject={verify} · "
             f"heads={entry.classifiers} · offline=[{offline}]",
             flush=True,
         )

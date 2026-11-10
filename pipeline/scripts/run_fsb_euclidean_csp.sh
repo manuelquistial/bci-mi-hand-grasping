@@ -18,12 +18,12 @@ export OPENBLAS_NUM_THREADS="${OMP_NUM_THREADS}"
 export MKL_NUM_THREADS="${OMP_NUM_THREADS}"
 export NUMEXPR_NUM_THREADS="${OMP_NUM_THREADS}"
 
-ONLINE_SUBJECT="${1:-1}"
+ONLINE_SUBJECT="${1:-S001}"
 DATASET="${2:-shuqfa2024}"
 MAX_TRIALS="${3:-}"
 CONFIG="${ROOT}/configs/fsb-euclidean-csp.json"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
-OUT_DIR="${ROOT}/batch-results/fsb-euclidean-csp-${STAMP}"
+OUT_DIR="${ROOT}/batch-results/fsb-euclidean-csp-loso-${STAMP}"
 mkdir -p "$OUT_DIR"
 
 if [[ ! -f "$CONFIG" ]]; then
@@ -54,13 +54,14 @@ dataset = ${DATASET@Q}
 for mode in payload["modes"]:
     mode["dataset"] = dataset
     mode["cross_subject"] = True
+    mode["hold_out_online_subject"] = True
     mode["online_subject"] = online_subject or None
     mode.pop("subject", None)
 dst.write_text(json.dumps(payload, indent=2) + "\n")
 print(dst)
 PY
 
-echo "==> Cross-subject offline export (all subjects → euclidean CSP + LR|SVM)"
+echo "==> Cross-subject LOSO offline export (hold out ${ONLINE_SUBJECT} → euclidean CSP + LR|SVM)"
 uv run pipeline offline-export --config "$WORK_CONFIG" | tee "$OUT_DIR/offline-export.log"
 
 echo "==> Registered packs"

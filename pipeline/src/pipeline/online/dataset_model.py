@@ -8,6 +8,7 @@ subject against that frozen pack.
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -50,13 +51,15 @@ def train_frozen_from_dataset(
     cross_subject: bool = True,
     workers: int = 4,
     online_subject: str | None = None,
+    hold_out_online_subject: bool = True,
 ) -> FrozenOnlineModel:
     """Fit shared CSP + N classifier heads on left/right imagery trials.
 
     When ``cross_subject`` is true (default), every listed participant is
     loaded. Euclidean alignment is applied per participant, then CSP and the
     heads are fit on the pooled aligned trials. ``online_subject`` (or
-    ``subject``) is stored only as the verification subject for online replay.
+    ``subject``) is the verification subject for online replay. By default that
+    participant is held out of training (LOSO-style pack).
 
     When ``cross_subject`` is false, only ``subject`` is used (legacy smoke).
     """
@@ -70,12 +73,24 @@ def train_frozen_from_dataset(
         lambda root, dataset_id: query_simulator_subjects(root, dataset_id)
     )
     verify = online_subject or subject
+    held_out = False
     if cross_subject and dataset != "recorded_session":
         targets = [str(item["id"]) for item in lister(project, dataset)]
         if not targets:
             raise ValueError(f"No participants listed for dataset {dataset!r}")
         if verify is None:
             verify = targets[0]
+        if hold_out_online_subject and verify is not None:
+            kept = [sid for sid in targets if not _same_subject(sid, verify)]
+            if len(kept) == len(targets):
+                raise ValueError(
+                    f"online_subject {verify!r} not found among listed participants "
+                    f"(cannot hold out for LOSO training)"
+                )
+            if not kept:
+                raise ValueError("Holding out the online subject left an empty training cohort")
+            targets = kept
+            held_out = True
     else:
         chosen = subject or _default_subject(project, dataset, session_dir)
         targets = [chosen] if chosen is not None else [None]
@@ -135,6 +150,7 @@ def train_frozen_from_dataset(
             "train_subjects": used_subjects,
             "n_train_subjects": len(used_subjects),
             "online_subject": verify or "",
+            "held_out_online_subject": held_out,
             "session_dir": session_dir or "",
             "n_hand_trials": len(all_labels),
             "alignment": "euclidean",
@@ -191,3 +207,22 @@ def _default_subject(
     if not subjects:
         raise ValueError(f"No participants listed for dataset {dataset!r}")
     return str(subjects[0]["id"])
+
+
+def _subject_key(subject_id: str | None) -> str | None:
+    """Normalize ids like ``1``, ``S001``, ``sub_1`` to a comparable key."""
+    if subject_id is None:
+        return None
+    text = str(subject_id).strip()
+    if not text:
+        return None
+    match = re.fullmatch(r"(?:sub[_-]?|s)?(\d+)", text, flags=re.IGNORECASE)
+    if match:
+        return str(int(match.group(1)))
+    return text.casefold()
+
+
+def _same_subject(left: str | None, right: str | None) -> bool:
+    a = _subject_key(left)
+    b = _subject_key(right)
+    return a is not None and a == b
