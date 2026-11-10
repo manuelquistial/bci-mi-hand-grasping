@@ -22,6 +22,7 @@ from pipeline.online.registry import (
     export_offline_modes,
     load_offline_modes,
 )
+from pipeline.online.replay_session import ReplayOnlineConfig, ReplayOnlineSession
 from pipeline.online.simulator_session import SimulatorOnlineConfig, SimulatorOnlineSession
 from pipeline.online.stream import OnlineStream
 from pipeline.online.trial_loop import TrialLoop, TrialTiming
@@ -44,6 +45,8 @@ __all__ = [
     "OnlinePipeline",
     "OnlineStream",
     "RegistryEntry",
+    "ReplayOnlineConfig",
+    "ReplayOnlineSession",
     "SimulatorOnlineConfig",
     "SimulatorOnlineSession",
     "TrialLoop",

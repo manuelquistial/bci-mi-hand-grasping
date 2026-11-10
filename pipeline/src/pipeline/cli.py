@@ -265,6 +265,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Name used when --register is set (default: <dataset>-<subject>-online)",
     )
 
+    replay_p = sub.add_parser(
+        "online-replay",
+        help="Classify a dataset file online without LSL (Slurm / headless)",
+    )
+    replay_p.add_argument("--dataset", default="shuqfa2024")
+    replay_p.add_argument("--subject", default=None)
+    replay_p.add_argument("--session-dir", default=None)
+    replay_p.add_argument(
+        "--registry",
+        required=True,
+        help="Registered offline export id or name",
+    )
+    replay_p.add_argument("--max-trials", type=int, default=None)
+    replay_p.add_argument("--log", default=None)
+    replay_p.add_argument(
+        "--dump-seconds",
+        type=float,
+        default=200.0,
+        help="How many seconds of the recording to replay (default: 200)",
+    )
+
     offline_export_p = sub.add_parser(
         "offline-export",
         help="Train offline mode(s) and register frozen models for online-sim",
@@ -656,12 +677,57 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_record(args)
     if args.command == "online-sim":
         return _cmd_online_sim(args)
+    if args.command == "online-replay":
+        return _cmd_online_replay(args)
     if args.command == "offline-export":
         return _cmd_offline_export(args)
     if args.command == "offline-list":
         return _cmd_offline_list(args)
     parser.error(f"Unknown command: {args.command}")
     return 2
+
+
+def _cmd_online_replay(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
+    from pipeline.online.registry import OnlineModelRegistry
+    from pipeline.online.replay_session import ReplayOnlineConfig, ReplayOnlineSession
+    from pipeline.service import default_recordings_root
+
+    log_path = Path(args.log) if args.log else (
+        default_recordings_root().parent
+        / "batch-results"
+        / f"online-replay-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.jsonl"
+    )
+    try:
+        registry = OnlineModelRegistry()
+        entry = registry.get(args.registry)
+        model = registry.load_model(args.registry)
+        dataset = str(entry.offline.get("dataset") or args.dataset)
+        subject = args.subject or str(entry.offline.get("subject") or "") or None
+        session_dir = args.session_dir or str(entry.offline.get("session_dir") or "") or None
+        print(
+            f"Replay registry {entry.id} · dataset={dataset} · subject={subject or '-'} · "
+            f"heads={list(model.classifier_names)}",
+            flush=True,
+        )
+        summary = ReplayOnlineSession(
+            model,
+            ReplayOnlineConfig(
+                dataset=dataset,
+                subject=subject,
+                session_dir=session_dir,
+                max_trials=args.max_trials,
+                log_path=log_path,
+                dump_seconds=args.dump_seconds,
+            ),
+        ).run()
+    except (TimeoutError, ValueError, RuntimeError, FileNotFoundError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(summary, indent=2), flush=True)
+    print(f"Log: {log_path}", flush=True)
+    return 0
 
 
 def _cmd_offline_export(args: argparse.Namespace) -> int:

@@ -3,7 +3,7 @@
     {
       "name": "euclidean-csp-logistic_regression",
       "dataset": "shuqfa2024",
-      "subject": null,
+      "subject": "1",
       "alignment": "euclidean",
       "features": "csp",
       "classifiers": ["logistic_regression"],
@@ -19,7 +19,7 @@
     {
       "name": "euclidean-csp-linear_svm",
       "dataset": "shuqfa2024",
-      "subject": null,
+      "subject": "1",
       "alignment": "euclidean",
       "features": "csp",
       "classifiers": ["linear_svm"],
