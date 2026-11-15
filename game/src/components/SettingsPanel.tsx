@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-import { pipelineListDatasets, type SimulatorDataset } from "@/lib/pipeline/client";
+import {
+  pipelineListDatasets,
+  pipelineListOnlineModels,
+  type OnlineModelPack,
+  type SimulatorDataset,
+} from "@/lib/pipeline/client";
 import { useSettingsStore } from "@/state/settings-store";
 
 import styles from "./settings-panel.module.css";
@@ -35,6 +40,8 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
   const showsDataset = screen === "simulator" || screen === "pre-model";
   const [datasets, setDatasets] = useState<SimulatorDataset[]>([]);
   const [datasetError, setDatasetError] = useState<string | null>(null);
+  const [losoModels, setLosoModels] = useState<OnlineModelPack[]>([]);
+  const [registryError, setRegistryError] = useState<string | null>(null);
 
   useEffect(() => {
     if (screen !== "simulator" && screen !== "pre-model") return;
@@ -59,6 +66,31 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
     };
   }, [screen, setNested]);
 
+  useEffect(() => {
+    if (screen !== "simulator" && screen !== "real") return;
+    let cancelled = false;
+    const baseUrl = useSettingsStore.getState().settings.pipeline.baseUrl;
+    pipelineListOnlineModels(baseUrl, { losoOnly: true })
+      .then((listed) => {
+        if (cancelled) return;
+        setLosoModels(listed);
+        setRegistryError(null);
+        const current = useSettingsStore.getState().settings.pipeline.registry;
+        if (listed.length > 0 && !listed.some((item) => item.id === current)) {
+          setNested("pipeline", { registry: listed[0].id });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setRegistryError(
+          error instanceof Error ? error.message : "Could not load LOSO models",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [screen, setNested, settings.pipeline.baseUrl]);
+
   return (
     <section className={styles.panel} aria-labelledby="settings-heading">
       <h2 id="settings-heading" className={styles.title}>
@@ -72,14 +104,14 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
       ) : null}
       {screen === "simulator" ? (
         <p className={styles.help}>
-          Activity times come from the dataset. The pipeline cuts the same 2 s windows
-          every 0.5 s: 0–2, 0.5–2.5, 1–3, 1.5–3.5, and 2–4.
+          Activity times come from the dataset. The frozen LOSO pack classifies each
+          2 s window and streams left/right probabilities to the game over WebSocket.
         </p>
       ) : null}
       {screen === "real" ? (
         <p className={styles.help}>
-          Each trial comes from the session. During its activity the pipeline cuts 2 s
-          windows every 0.5 s: 0–2, 0.5–2.5, 1–3, 1.5–3.5, and 2–4.
+          Each trial comes from the session. During activity the pipeline classifies
+          2 s windows and drives the avatar through the same WebSocket bridge.
         </p>
       ) : null}
 
@@ -120,6 +152,79 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
               </select>
             </label>
             {datasetError ? <p className={styles.note}>{datasetError}</p> : null}
+          </>
+        ) : null}
+        {screen === "simulator" || screen === "real" ? (
+          <>
+            <label className={styles.row}>
+              Subject
+              <input
+                type="text"
+                value={settings.pipeline.subject}
+                placeholder="S001"
+                onChange={(e) => setNested("pipeline", { subject: e.target.value })}
+              />
+            </label>
+            <label className={styles.row}>
+              Online model registry (LOSO)
+              <select
+                value={settings.pipeline.registry}
+                onChange={(e) => setNested("pipeline", { registry: e.target.value })}
+              >
+                {losoModels.length === 0 ? (
+                  <option value={settings.pipeline.registry}>
+                    {settings.pipeline.registry || "No LOSO packs found"}
+                  </option>
+                ) : (
+                  losoModels.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.label}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            {registryError ? <p className={styles.note}>{registryError}</p> : null}
+            <label className={styles.row}>
+              Control strategy
+              <select
+                value={settings.pipeline.controlStrategy}
+                onChange={(e) =>
+                  setNested("pipeline", {
+                    controlStrategy:
+                      e.target.value as typeof settings.pipeline.controlStrategy,
+                  })
+                }
+              >
+                <option value="baseline_proba">A · baseline (proba / margin)</option>
+                <option value="discrete">B · discrete ±1</option>
+                <option value="temporal_discrete">C · temporal discrete</option>
+                <option value="temporal_proportional">D · temporal proportional</option>
+              </select>
+            </label>
+            <label className={styles.row}>
+              BCI input
+              <select
+                value={settings.online.inputAdapter}
+                onChange={(e) =>
+                  setNested("online", {
+                    inputAdapter: e.target.value as typeof settings.online.inputAdapter,
+                  })
+                }
+              >
+                <option value="websocket">WebSocket (frozen model)</option>
+                <option value="mock">Mock</option>
+                <option value="window">Window event</option>
+              </select>
+            </label>
+            <label className={styles.row}>
+              WebSocket URL
+              <input
+                type="text"
+                value={settings.online.websocketUrl}
+                onChange={(e) => setNested("online", { websocketUrl: e.target.value })}
+              />
+            </label>
           </>
         ) : null}
       </fieldset>
@@ -568,7 +673,7 @@ export function SettingsPanel({ screen }: { screen: SetupScreen }) {
       <fieldset className={styles.fieldset}>
         <legend>Session</legend>
         <label className={styles.row}>
-          Trials
+          Trials (simulator: dataset MI count, e.g. 14)
           <input
             type="number"
             min={1}

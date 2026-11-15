@@ -119,6 +119,60 @@ export async function pipelineListSubjects(
   }));
 }
 
+export type OnlineModelPack = {
+  id: string;
+  name: string;
+  label: string;
+  heldOut: boolean;
+  onlineSubject: string;
+  dataset: string;
+  controlClassifier: string;
+};
+
+/** List frozen online packs. Game UI uses ``losoOnly`` to hide leak/pooled runs. */
+export async function pipelineListOnlineModels(
+  baseUrl: string,
+  options: { losoOnly?: boolean } = {},
+): Promise<OnlineModelPack[]> {
+  const loso = options.losoOnly === false ? "0" : "1";
+  const url = `${baseUrl.replace(/\/$/, "")}/v1/online/models?loso=${loso}`;
+  let response: Response;
+  try {
+    response = await fetch(url);
+  } catch {
+    throw new Error(
+      `Pipeline is not reachable at ${baseUrl}. Start it with \`uv run pipeline serve\` inside pipeline/.`,
+    );
+  }
+  const text = await response.text();
+  const payload = text
+    ? (JSON.parse(text) as {
+        error?: string;
+        models?: Array<{
+          id: string;
+          name?: string;
+          label?: string;
+          held_out?: boolean;
+          online_subject?: string;
+          dataset?: string;
+          control_classifier?: string;
+        }>;
+      })
+    : {};
+  if (!response.ok) {
+    throw new Error(payload.error || `Pipeline responded ${response.status}`);
+  }
+  return (payload.models ?? []).map((item) => ({
+    id: item.id,
+    name: item.name || item.id,
+    label: item.label || item.name || item.id,
+    heldOut: Boolean(item.held_out),
+    onlineSubject: item.online_subject || "",
+    dataset: item.dataset || "",
+    controlClassifier: item.control_classifier || "",
+  }));
+}
+
 export function pipelineOnlineStart(
   settings: PipelineSettings,
 ): Promise<Record<string, unknown>> {
@@ -126,6 +180,12 @@ export function pipelineOnlineStart(
     source: settings.onlineSource,
     dataset: settings.dataset,
     session_dir: settings.sessionDir,
+    subject: settings.subject || undefined,
+    registry: settings.registry || undefined,
+    control_ws_port: settings.controlWsPort || 8090,
+    control_strategy: settings.controlStrategy || "baseline_proba",
+    control_window_k: settings.controlWindowK || 3,
+    control_proportional_scale: settings.controlProportionalScale || 1.0,
   });
 }
 

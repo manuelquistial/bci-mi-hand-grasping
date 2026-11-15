@@ -148,6 +148,35 @@ class FrozenOnlineModel:
             out.append((head.name, label, score))
         return out
 
+    def predict_proba_pair(
+        self,
+        trial_channels_by_time: np.ndarray,
+        *,
+        classifier_name: str | None = None,
+    ) -> tuple[float, float] | None:
+        """Return ``(p_left, p_right)`` in ``[0, 1]`` for the game control adapter."""
+        head = self.head(classifier_name)
+        row = self.feature_vector(trial_channels_by_time, classifier_name=head.name)
+        classes = [str(item) for item in getattr(head.classifier, "classes_", [])]
+        proba_fn = getattr(head.classifier, "predict_proba", None)
+        if callable(proba_fn):
+            scores = np.asarray(proba_fn(row), dtype=np.float64).reshape(-1)
+            by_class = {
+                name: float(value) for name, value in zip(classes, scores, strict=False)
+            }
+            if "left" in by_class and "right" in by_class:
+                return by_class["left"], by_class["right"]
+        decision = getattr(head.classifier, "decision_function", None)
+        if callable(decision) and len(classes) == 2:
+            value = float(np.asarray(decision(row), dtype=np.float64).reshape(-1)[0])
+            # Positive decision_function maps to classes_[1] in sklearn binary SVM/LR.
+            p_second = float(1.0 / (1.0 + np.exp(-value)))
+            p_first = 1.0 - p_second
+            by_class = {classes[0]: p_first, classes[1]: p_second}
+            if "left" in by_class and "right" in by_class:
+                return by_class["left"], by_class["right"]
+        return None
+
 
 def parse_classifier_names(
     names: Sequence[str] | str | None = None,

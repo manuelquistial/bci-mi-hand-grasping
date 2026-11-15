@@ -6,8 +6,12 @@ function applyCrop(
   sprite: Phaser.GameObjects.Image,
   crop: NormalizedCrop,
 ): { width: number; height: number } {
-  const frameWidth = sprite.frame.width;
-  const frameHeight = sprite.frame.height;
+  const frame = sprite.frame;
+  if (!frame) {
+    return { width: 0, height: 0 };
+  }
+  const frameWidth = frame.width;
+  const frameHeight = frame.height;
 
   const cropX = Math.round(frameWidth * crop.x);
   const cropY = Math.round(frameHeight * crop.y);
@@ -29,12 +33,14 @@ export function getSpriteFitScale(
   maxHeight: number,
   crop?: NormalizedCrop,
 ): number {
+  const frame = sprite.frame;
+  if (!frame) return 1;
   const { width, height } = crop
     ? {
-        width: Math.round(sprite.frame.width * crop.width),
-        height: Math.round(sprite.frame.height * crop.height),
+        width: Math.round(frame.width * crop.width),
+        height: Math.round(frame.height * crop.height),
       }
-    : { width: sprite.frame.width, height: sprite.frame.height };
+    : { width: frame.width, height: frame.height };
 
   if (width <= 0 || height <= 0) {
     return 1;
@@ -49,10 +55,12 @@ export function fitSprite(
   maxHeight: number,
   crop?: NormalizedCrop,
 ): Phaser.GameObjects.Image {
+  const frame = sprite.frame;
+  if (!frame) return sprite;
   if (crop) {
     applyCrop(sprite, crop);
   } else {
-    sprite.setCrop(0, 0, sprite.frame.width, sprite.frame.height);
+    sprite.setCrop(0, 0, frame.width, frame.height);
     sprite.setOrigin(0.5, 0.5);
   }
 
@@ -65,8 +73,10 @@ export function setSpriteOriginTop(
   sprite: Phaser.GameObjects.Image,
   crop?: NormalizedCrop,
 ): void {
-  const frameWidth = sprite.frame.width;
-  const frameHeight = sprite.frame.height;
+  const frame = sprite.frame;
+  if (!frame) return;
+  const frameWidth = frame.width;
+  const frameHeight = frame.height;
 
   if (crop) {
     const cropX = Math.round(frameWidth * crop.x);

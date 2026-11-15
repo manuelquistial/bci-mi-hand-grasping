@@ -14,7 +14,7 @@ export async function createCollectorGame(
     parent,
     width: GAME_WIDTH,
     height: GAME_HEIGHT,
-    backgroundColor: "#88c943",
+    backgroundColor: "#4a7a28",
     scene: [BootScene, OfflineScene, OnlineScene],
     render: {
       antialias: true,

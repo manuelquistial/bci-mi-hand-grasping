@@ -29,6 +29,10 @@ export type SessionSettings = {
     gain: number;
     smoothing: number;
     maxHorizontalSpeed: number;
+    /** Drop BCI commands older than this many ms (stale-hold prevention). */
+    commandExpiryMs: number;
+    /** When true, temporal strategies skip Phaser EMA (decoder already integrates). */
+    skipPhaserSmoothingForTemporal: boolean;
     mockSampleIntervalMs: number;
     targetSpawnMode: TargetSpawnMode;
     mockPattern:
@@ -51,6 +55,16 @@ export type SessionSettings = {
     dataset: string;
     sessionDir: string;
     subject: string;
+    /** Registry id/name for the frozen online pack (LOSO SVM by default). */
+    registry: string;
+    controlWsPort: number;
+    controlStrategy:
+      | "baseline_proba"
+      | "discrete"
+      | "temporal_discrete"
+      | "temporal_proportional";
+    controlWindowK: number;
+    controlProportionalScale: number;
   };
   preModel: {
     notchHz: number;
@@ -124,7 +138,7 @@ export const defaultSessionSettings = (): SessionSettings => ({
     autoMoveSpeed: 220,
   },
   online: {
-    inputAdapter: "mock",
+    inputAdapter: "websocket",
     websocketUrl: "ws://127.0.0.1:8090",
     bciDebugLogging: false,
     wsMaxReconnectAttempts: 8,
@@ -134,13 +148,16 @@ export const defaultSessionSettings = (): SessionSettings => ({
     gain: 1.2,
     smoothing: 0.25,
     maxHorizontalSpeed: 280,
+    commandExpiryMs: 750,
+    skipPhaserSmoothingForTemporal: true,
     mockSampleIntervalMs: 33,
     targetSpawnMode: "balanced",
     mockPattern: "alternating",
     mockNoiseLevel: 0.05,
   },
   experimental: {
-    numberOfTrials: 8,
+    /** Simulator slave: expected dataset MI trials (Shuqfa S001 = 14). */
+    numberOfTrials: 14,
     blockSize: 4,
     randomSeed: 42,
     sequenceMode: "random_balanced",
@@ -150,7 +167,12 @@ export const defaultSessionSettings = (): SessionSettings => ({
     onlineSource: "simulator",
     dataset: "shuqfa2024",
     sessionDir: "",
-    subject: "",
+    subject: "S001",
+    registry: "20261110-165457-euclidean-csp-linear_svm",
+    controlWsPort: 8090,
+    controlStrategy: "baseline_proba",
+    controlWindowK: 3,
+    controlProportionalScale: 1,
   },
   preModel: {
     notchHz: 50,

@@ -113,6 +113,14 @@ class OnlinePipeline:
             predictions=tuple(predictions),
         )
 
+    def aligned_trial(self, window: ImageryWindow) -> np.ndarray | None:
+        """Return EA-aligned ``(channels, samples)`` for probability mapping, if ready."""
+        if self._ea_weights is None or not self.ea_ready:
+            return None
+        if window.eeg.ndim != 2 or window.eeg.shape[0] < 16:
+            return None
+        return apply_alignment(window.eeg, self._ea_weights).T
+
     def decisions_by_classifier(self, decision: WindowDecision) -> dict[str, WindowDecision]:
         """Expand one multi-head window into one ``WindowDecision`` per classifier."""
         if not decision.predictions:

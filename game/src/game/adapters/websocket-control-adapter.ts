@@ -1,4 +1,8 @@
-import { parseBCIControlSample } from "@/lib/bci/validate-sample";
+import {
+  commandV2ToSample,
+  parseBCIWireMessage,
+  type BCIWireMessage,
+} from "@/lib/bci/validate-sample";
 import type { BCIControlSample } from "@/types/domain";
 
 import type { BciStatusEmitter } from "./online-adapter-factory";
@@ -24,6 +28,8 @@ export class WebSocketControlAdapter implements ControlAdapter {
   private socket: WebSocket | null = null;
 
   private readonly listeners = new Set<(s: BCIControlSample) => void>();
+
+  private readonly wireListeners = new Set<(m: BCIWireMessage) => void>();
 
   private status: ControlAdapterStatus = "idle";
 
@@ -65,6 +71,14 @@ export class WebSocketControlAdapter implements ControlAdapter {
 
   unsubscribe(callback: (sample: BCIControlSample) => void): void {
     this.listeners.delete(callback);
+  }
+
+  subscribeWire(callback: (message: BCIWireMessage) => void): void {
+    this.wireListeners.add(callback);
+  }
+
+  unsubscribeWire(callback: (message: BCIWireMessage) => void): void {
+    this.wireListeners.delete(callback);
   }
 
   getStatus(): ControlAdapterStatus {
@@ -184,15 +198,30 @@ export class WebSocketControlAdapter implements ControlAdapter {
     if (Array.isArray(raw) && raw.length > 0) {
       raw = raw[0];
     }
-    const parsed = parseBCIControlSample(raw);
+    const parsed = parseBCIWireMessage(raw);
     if (!parsed.ok) {
       this.warnInvalid(parsed.error, raw);
       return;
     }
     if (this.config.getDebug()) {
-      console.debug("[BCI ws] sample", parsed.value);
+      console.debug("[BCI ws] message", parsed.value);
     }
-    for (const cb of this.listeners) cb(parsed.value);
+    for (const cb of this.wireListeners) cb(parsed.value);
+    // Legacy sample listeners: map v2 controls / valid v1 samples.
+    if (parsed.value.kind === "v2_control") {
+      if (!parsed.value.command.valid) {
+        for (const cb of this.listeners) {
+          cb({ left: 0.5, right: 0.5, timestamp: parsed.value.command.issuedAt });
+        }
+        return;
+      }
+      const sample = commandV2ToSample(parsed.value.command);
+      for (const cb of this.listeners) cb(sample);
+      return;
+    }
+    if (parsed.value.kind === "v1" && parsed.value.valid) {
+      for (const cb of this.listeners) cb(parsed.value.sample);
+    }
   }
 
   private warnInvalid(msg: string, data?: unknown): void {

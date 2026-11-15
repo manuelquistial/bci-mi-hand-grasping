@@ -45,8 +45,11 @@ export class Player {
 
   setPose(pose: PlayerPose): void {
     if (this.pose === pose) return;
+    if (!this.sprite?.active || !this.sprite.frame) return;
     this.pose = pose;
-    this.stopWalkAnimation();
+    // Stop bob first without resizing — frame may be mid-tween / about to change.
+    this.walkTween?.stop();
+    this.walkTween = null;
     const key =
       pose === "left"
         ? ASSET_KEYS.character.walkLeft
@@ -83,8 +86,14 @@ export class Player {
   }
 
   resetPosition(): void {
+    if (!this.sprite?.active) return;
     this.stopMove();
+    this.walkTween?.stop();
+    this.walkTween = null;
+    this.sprite.setVisible(true);
+    this.sprite.setAlpha(1);
     this.sprite.setPosition(this.startX, this.startY);
+    // Force idle texture even if pose was already "idle".
     this.pose = "success";
     this.setPose("idle");
   }
@@ -107,12 +116,14 @@ export class Player {
   }
 
   private applyPlayerSize(): void {
+    if (!this.sprite?.active || !this.sprite.frame) return;
     const { width, height } = this.size();
     fitSprite(this.sprite, width, height, CHARACTER_CROP);
   }
 
   private startWalkBob(): void {
     if (this.walkTween) return;
+    if (!this.sprite?.active || !this.sprite.frame) return;
     const { width, height } = this.size();
     const base = getSpriteFitScale(this.sprite, width, height, CHARACTER_CROP);
     this.walkTween = this.scene.tweens.add({

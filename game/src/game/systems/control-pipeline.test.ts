@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createInitialPipelineState,
+  processControlCommand,
   processControlSample,
 } from "./control-pipeline";
 
@@ -34,5 +35,38 @@ describe("processControlSample", () => {
       },
     );
     expect(out.velocityX).toBe(0);
+  });
+});
+
+describe("processControlCommand", () => {
+  it("maps negative control to leftward velocity", () => {
+    const out = processControlCommand(
+      -1,
+      createInitialPipelineState(),
+      {
+        deadZone: 0,
+        gain: 1,
+        smoothing: 1,
+        maxHorizontalSpeed: 200,
+      },
+      { applySmoothing: false },
+    );
+    expect(out.velocityX).toBe(-200);
+  });
+
+  it("can skip smoothing for temporal strategies", () => {
+    const prev = { smoothedSignal: 0.9 };
+    const out = processControlCommand(
+      0,
+      prev,
+      {
+        deadZone: 0,
+        gain: 1,
+        smoothing: 0.5,
+        maxHorizontalSpeed: 100,
+      },
+      { applySmoothing: false },
+    );
+    expect(out.smoothedSignal).toBe(0);
   });
 });

@@ -10,6 +10,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -501,6 +502,13 @@ class PipelineService:
         self._online_dataset: str | None = None
         self._windower = ActivityWindower()
         self._live = LiveSignal()
+        self._control_hub: Any | None = None
+        self._control_bridge: Any | None = None
+        self._control_registry: str | None = None
+        self._control_ws_port = 8090
+        self._frozen_model: Any | None = None
+        self._control_decoder_config: Any | None = None
+        self._online_subject: str | None = None
 
     def list_datasets(self) -> dict[str, Any]:
         if self._datasets is None:
@@ -532,6 +540,47 @@ class PipelineService:
             cached = lister(dataset)
             self._subjects[dataset] = cached
         return {"subjects": cached}
+
+    def list_online_models(self, *, loso_only: bool = False) -> dict[str, Any]:
+        """List frozen packs in ``online-models/`` for the game registry picker."""
+        from pipeline.online.registry import OnlineModelRegistry
+
+        models: list[dict[str, Any]] = []
+        for entry in OnlineModelRegistry().list_entries():
+            offline = dict(entry.offline or {})
+            held_out = bool(
+                offline.get("held_out_online_subject")
+                or offline.get("hold_out_online_subject")
+            )
+            if loso_only and not held_out:
+                continue
+            online_subject = str(
+                offline.get("online_subject") or offline.get("subject") or ""
+            )
+            n_train = offline.get("n_train_subjects")
+            head = entry.control_classifier or (
+                entry.classifiers[0] if entry.classifiers else ""
+            )
+            head_short = {
+                "linear_svm": "SVM",
+                "logistic_regression": "LR",
+            }.get(str(head), str(head) or "?")
+            tag = "LOSO" if held_out else "pooled"
+            subject_bit = online_subject or "-"
+            train_bit = f", n_train={n_train}" if n_train is not None else ""
+            models.append(
+                {
+                    "id": entry.id,
+                    "name": entry.name,
+                    "label": f"{head_short} · {tag} {subject_bit}{train_bit}",
+                    "held_out": held_out,
+                    "online_subject": online_subject,
+                    "dataset": str(offline.get("dataset") or ""),
+                    "control_classifier": str(head),
+                    "n_train_subjects": n_train,
+                }
+            )
+        return {"models": models}
 
     def preview_filter(
         self,
@@ -1090,6 +1139,11 @@ class PipelineService:
         run: str | None = None,
         max_samples: int | None = None,
         wait_seconds: float = 5.0,
+        registry: str | None = None,
+        control_ws_port: int = 8090,
+        control_strategy: str = "baseline_proba",
+        control_window_k: int = 3,
+        control_proportional_scale: float = 1.0,
     ) -> dict[str, Any]:
         if source not in {"simulator", "cyton", "pre_model"}:
             raise ValueError("source must be 'simulator', 'cyton', or 'pre_model'")
@@ -1109,12 +1163,35 @@ class PipelineService:
         # A refresh or a finished playback can leave the previous run registered.
         # Start means "run this session", so the previous one is closed first.
         self.stop_online()
+        frozen = None
+        hub = None
+        if registry:
+            from pipeline.online.control_bridge import ControlWsHub
+            from pipeline.online.control_decoder import ControlDecoderConfig
+            from pipeline.online.registry import OnlineModelRegistry
+
+            frozen = OnlineModelRegistry().load_model(registry)
+            hub = ControlWsHub(port=int(control_ws_port))
+            hub.start()
+            self._control_decoder_config = ControlDecoderConfig(
+                strategy=control_strategy,  # type: ignore[arg-type]
+                window_k=int(control_window_k),
+                proportional_scale=float(control_proportional_scale),
+            )
+        else:
+            self._control_decoder_config = None
         with self._lock:
             self._online_samples = 0
             self._emg_samples = 0
             self._online_error = None
             self._online_source = source
             self._online_dataset = dataset
+            self._online_subject = subject
+            self._control_registry = registry
+            self._control_ws_port = int(control_ws_port)
+            self._frozen_model = frozen
+            self._control_hub = hub
+            self._control_bridge = None
             self._windower.reset()
             self._online_stop = threading.Event()
         if command is not None:
@@ -1136,6 +1213,14 @@ class PipelineService:
             "lsl_name": lsl_name,
             "command": command,
             "pid": self._proc.pid if self._proc is not None else None,
+            "subject": subject,
+            "registry": registry,
+            "control_ws_url": hub.url if hub is not None else None,
+            "control_classifier": (
+                None if frozen is None else frozen.control_name
+            ),
+            "control_strategy": control_strategy,
+            "protocol_version": 2,
         }
 
     def stop_online(self) -> dict[str, Any]:
@@ -1143,9 +1228,15 @@ class PipelineService:
             proc = self._proc
             stop = self._online_stop
             listener = self._listener
+            hub = self._control_hub
+            bridge = self._control_bridge
             self._proc = None
             self._listener = None
             self._online_stop = None
+            self._control_hub = None
+            self._control_bridge = None
+            self._frozen_model = None
+            self._control_registry = None
         if stop is not None:
             stop.set()
         if proc is not None and proc.poll() is None:
@@ -1156,17 +1247,26 @@ class PipelineService:
                 proc.kill()
         if listener is not None:
             listener.join(timeout=2)
+        if hub is not None:
+            hub.stop()
         self._live.close()
         with self._lock:
             samples = self._online_samples
             error = self._online_error
             source = self._online_source
+            published = bridge.published_count if bridge is not None else 0
             self._online_source = None
             self._online_dataset = None
             self._windower.reset()
-        if proc is None and listener is None:
+        if proc is None and listener is None and hub is None:
             return {"stopped": False}
-        return {"stopped": True, "source": source, "samples_seen": samples, "error": error}
+        return {
+            "stopped": True,
+            "source": source,
+            "samples_seen": samples,
+            "control_samples": published,
+            "error": error,
+        }
 
     def mark_online(self, kind: str, code: str, label: str) -> dict[str, Any]:
         """Window the live EEG for one Online real trial activity.
@@ -1183,12 +1283,15 @@ class PipelineService:
         with self._lock:
             if self._online_source != "cyton":
                 raise RuntimeError("No online real session in progress")
+            bridge = self._control_bridge
         if kind == "imagery_start":
             current = self._windower.begin(now, label, code or kind)
         else:
             current = self._windower.close_open(now)
             if current is None:
                 raise RuntimeError("Motor imagery has not started")
+        if bridge is not None:
+            bridge.on_marker(now, kind, f"{kind}:{code or kind}:{label}", label)
         return {"accepted": True, "activity": current}
 
     def status(self) -> dict[str, Any]:
@@ -1211,6 +1314,10 @@ class PipelineService:
                 "path": str(recorder.writer.root),
             }
         online = None
+        with self._lock:
+            registry = self._control_registry
+            hub = self._control_hub
+            bridge = self._control_bridge
         if source is not None:
             online = {
                 "source": source,
@@ -1220,6 +1327,10 @@ class PipelineService:
                 "emg_samples_seen": emg_samples if source == "cyton" else 0,
                 "error": error,
                 "activity": activity,
+                "registry": registry,
+                "control_ws_url": None if hub is None else hub.url,
+                "control_samples": None if bridge is None else bridge.published_count,
+                "last_control_sample": None if bridge is None else bridge.last_sample,
             }
         return {"recording": recording, "online": online}
 
@@ -1232,6 +1343,10 @@ class PipelineService:
             kind, label = parse_marker_text(raw)
             self._live.add_marker(float(timestamp), kind, label)
             self._window_dataset_activity(float(timestamp), kind, raw, label)
+            with self._lock:
+                bridge = self._control_bridge
+            if bridge is not None:
+                bridge.on_marker(float(timestamp), kind, raw, label)
 
     def _window_dataset_activity(self, timestamp: float, kind: str, raw: str, label: str) -> None:
         with self._lock:
@@ -1286,6 +1401,7 @@ class PipelineService:
                 reader.summary.nominal_srate,
                 channel_labels_for(reader.summary),
             )
+            self._maybe_start_control_bridge(reader.summary)
             if self._marker_opener is not None:
                 try:
                     marker_reader = self._marker_opener(
@@ -1301,13 +1417,14 @@ class PipelineService:
                     self._pull_emg(emg_reader)
                 chunk = reader.pull_chunk(timeout=0.1, max_samples=2048)
                 if chunk.samples:
-                    self._live.append(
-                        np.asarray(chunk.samples, dtype=np.float64),
-                        chunk.timestamps,
-                    )
-                    self._windower.push(np.asarray(chunk.samples, dtype=np.float64), chunk.timestamps)
+                    samples = np.asarray(chunk.samples, dtype=np.float64)
+                    self._live.append(samples, chunk.timestamps)
+                    self._windower.push(samples, chunk.timestamps)
                     with self._lock:
+                        bridge = self._control_bridge
                         self._online_samples += len(chunk.samples)
+                    if bridge is not None:
+                        bridge.push_eeg(samples, chunk.timestamps)
                     continue
                 proc = self._proc
                 if proc is not None and proc.poll() is not None:
@@ -1323,6 +1440,33 @@ class PipelineService:
             if reader is not None:
                 reader.close()
             self._finish_listener()
+
+    def _maybe_start_control_bridge(self, summary: StreamSummary) -> None:
+        with self._lock:
+            frozen = self._frozen_model
+            hub = self._control_hub
+            dataset = self._online_dataset or "shuqfa2024"
+            subject = self._online_subject or ""
+            decoder_config = self._control_decoder_config
+            if frozen is None or hub is None or self._control_bridge is not None:
+                return
+        from pipeline.online.control_bridge import LiveControlBridge
+
+        log_dir = self.recordings_root.parent / "batch-results"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = str(log_dir / f"control-log-{int(time.time())}.jsonl")
+        bridge = LiveControlBridge(
+            frozen,
+            dataset=dataset,
+            hub=hub,
+            sample_rate_hz=float(summary.nominal_srate or frozen.sample_rate_hz),
+            channel_count=int(summary.channel_count),
+            decoder_config=decoder_config,
+            subject_id=str(subject or ""),
+            log_path=log_path,
+        )
+        with self._lock:
+            self._control_bridge = bridge
 
     def _finish_listener(self) -> None:
         with self._lock:
@@ -1357,6 +1501,13 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
+        def handle(self) -> None:
+            try:
+                super().handle()
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+                # Browser / Next aborted a poll or closed keep-alive early.
+                return
+
         def log_message(self, fmt: str, *args: object) -> None:
             print(f"[pipeline] {self.address_string()} {fmt % args}")
 
@@ -1385,6 +1536,15 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
                 try:
                     self._send(200, service.list_subjects(dataset))
                 except (RuntimeError, OSError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+                    self._send(400, {"error": str(exc)})
+                return
+            if path == "/v1/online/models":
+                query = parse_qs(urlparse(self.path).query)
+                loso_raw = (query.get("loso") or ["0"])[0].lower()
+                loso_only = loso_raw in {"1", "true", "yes"}
+                try:
+                    self._send(200, service.list_online_models(loso_only=loso_only))
+                except (RuntimeError, OSError, json.JSONDecodeError) as exc:
                     self._send(400, {"error": str(exc)})
                 return
             self._send(404, {"error": "not found"})
@@ -1419,6 +1579,15 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
                         run=_blank_to_none(body.get("run")),
                         max_samples=_optional_int(body.get("max_samples")),
                         wait_seconds=float(body.get("wait_seconds") or 5),
+                        registry=_blank_to_none(body.get("registry")),
+                        control_ws_port=int(body.get("control_ws_port") or 8090),
+                        control_strategy=str(
+                            body.get("control_strategy") or "baseline_proba"
+                        ),
+                        control_window_k=int(body.get("control_window_k") or 3),
+                        control_proportional_scale=float(
+                            body.get("control_proportional_scale") or 1.0
+                        ),
                     )
                 elif path == "/v1/online/marker":
                     payload = service.mark_online(
@@ -1475,14 +1644,17 @@ def make_handler(service: PipelineService) -> type[BaseHTTPRequestHandler]:
 
         def _send(self, status: int, payload: dict[str, Any]) -> None:
             body = json.dumps(payload).encode("utf-8")
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.end_headers()
-            self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.end_headers()
+                self.wfile.write(body)
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+                return
 
     return Handler
 
@@ -1506,6 +1678,16 @@ def _optional_int(value: object) -> int | None:
     return int(value)
 
 
+class _QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Do not dump a traceback when the game closes a keep-alive socket."""
+
+    def handle_error(self, request: object, client_address: object) -> None:
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def serve(
     host: str = "127.0.0.1",
     port: int = 8765,
@@ -1514,7 +1696,7 @@ def serve(
     """Block and serve the session API."""
     root = Path(recordings_root) if recordings_root is not None else default_recordings_root()
     service = PipelineService(root)
-    server = ThreadingHTTPServer((host, port), make_handler(service))
+    server = _QuietThreadingHTTPServer((host, port), make_handler(service))
     print(f"pipeline serve http://{host}:{port}  recordings={root}", flush=True)
     try:
         server.serve_forever()

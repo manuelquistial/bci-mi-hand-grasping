@@ -16,12 +16,25 @@ export async function createTelemetryBatch(
     phase: string;
   }[],
 ) {
+  const candidateIds = [
+    ...new Set(rows.map((r) => r.trialId).filter((id): id is string => Boolean(id))),
+  ];
+  const validTrialIds = new Set<string>();
+  if (candidateIds.length > 0) {
+    const existing = await prisma.trial.findMany({
+      where: { sessionId, id: { in: candidateIds } },
+      select: { id: true },
+    });
+    for (const row of existing) validTrialIds.add(row.id);
+  }
+
   for (let i = 0; i < rows.length; i += CHUNK) {
     const slice = rows.slice(i, i + CHUNK);
     await prisma.telemetrySample.createMany({
       data: slice.map((r) => ({
         sessionId,
-        trialId: r.trialId,
+        trialId:
+          r.trialId && validTrialIds.has(r.trialId) ? r.trialId : null,
         timestamp: r.timestamp,
         leftValue: r.leftValue,
         rightValue: r.rightValue,

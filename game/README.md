@@ -146,7 +146,11 @@ window.dispatchEvent(
 
 Set **WebSocket URL** in Settings, start the session, then point your BCI bridge at the same URL. Each message should be JSON with `left`, `right`, `timestamp` as above (or a one-element array of that object). On disconnect, the client uses an **exponential backoff** reconnect scaffold (configurable max attempts and delays in Settings) until it gives up with status `exhausted`.
 
-The repo does not ship a WebSocket server; run your own relay next to the browser.
+When online mode starts with a **registry** pack, `pipeline serve` opens the
+control WebSocket (default `ws://127.0.0.1:8090`) and publishes classified
+`{left,right,timestamp}` samples from the frozen LOSO model. Use adapter
+**websocket** (now the default) and subject **S001** with registry
+`20261110-165457-euclidean-csp-linear_svm`.
 
 ### C) `mock` (default)
 

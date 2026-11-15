@@ -27,9 +27,18 @@ export class FeedbackSystem {
   clear(): void {
     this.feedbackTween?.stop();
     this.feedbackTween = null;
-    this.successIcon?.destroy();
-    this.successIcon = null;
-    this.sparkles.forEach((sparkle) => sparkle.destroy());
+
+    // Kill tweens first; updates on a destroyed Image hit null frame.sourceSize.
+    if (this.successIcon) {
+      this.scene.tweens.killTweensOf(this.successIcon);
+      this.successIcon.destroy();
+      this.successIcon = null;
+    }
+
+    for (const sparkle of this.sparkles) {
+      this.scene.tweens.killTweensOf(sparkle);
+      sparkle.destroy();
+    }
     this.sparkles = [];
   }
 

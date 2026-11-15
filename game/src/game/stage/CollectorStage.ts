@@ -143,8 +143,15 @@ export class CollectorStage {
 
     this.fixationCross.setVisible(phase === "fixation");
 
-    if (phase === "preparing" || phase === "fixation" || phase === "inter_trial_interval") {
+    if (
+      phase === "idle" ||
+      phase === "preparing" ||
+      phase === "fixation" ||
+      phase === "inter_trial_interval"
+    ) {
       this.player.resetPosition();
+      this.feedback.clear();
+    } else if (phase === "control") {
       this.feedback.clear();
     }
 
@@ -201,6 +208,31 @@ export class CollectorStage {
       this.player.setPose(velocityX < 0 ? "left" : "right");
     }
     return next;
+  }
+
+  /** One discrete step (px) toward left (−) or right (+). */
+  applyHorizontalStep(deltaX: number): number {
+    const margin = 48 * this.uiScale;
+    const next = Phaser.Math.Clamp(
+      this.player.getX() + deltaX,
+      margin,
+      this.width - margin,
+    );
+    this.player.setX(next);
+    if (Math.abs(deltaX) < 1) {
+      this.player.setPose("idle");
+    } else {
+      this.player.setPose(deltaX < 0 ? "left" : "right");
+    }
+    return next;
+  }
+
+  /** Snap onto the coin so continuous control cannot overshoot. */
+  snapToTarget(side: TargetSide): number {
+    const point = targetPoint(side, this.width, this.height);
+    this.player.setX(point.x);
+    this.player.setPose("success");
+    return point.x;
   }
 
   distanceTo(side: TargetSide): number {

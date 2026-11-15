@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { GameBridge } from "@/game/bridge/game-bridge";
+import type { CollectorStartPayload } from "@/game/scenes/collector-session-types";
 import { generateTrialSequence } from "@/game/utils/sequence";
 import { useGameBridgeEvents } from "@/hooks/useGameBridgeEvents";
 import { apiCreateSession } from "@/lib/api/client";
@@ -21,7 +22,6 @@ import { useSettingsStore } from "@/state/settings-store";
 
 import { FilterCharts } from "./FilterCharts";
 import { GameControls } from "./GameControls";
-import { SessionHUD } from "./SessionHUD";
 import { SettingsPanel, type SetupScreen } from "./SettingsPanel";
 import styles from "./game-page.module.css";
 
@@ -68,6 +68,9 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   const [view, setView] = useState<View>("setup");
   const [starting, setStarting] = useState(false);
   const [preview, setPreview] = useState<FilterPreview | null>(null);
+  const [startPayload, setStartPayload] = useState<CollectorStartPayload | null>(
+    null,
+  );
 
   useEffect(() => {
     if (view !== "charts") return;
@@ -97,18 +100,41 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     });
   }, [bridge, sessionStatus, settings]);
 
-  const stop = () => {
+  const leaveSession = (opts: { stopPipeline: boolean; stopPhaser: boolean }) => {
     if (viewRef.current !== "session") return;
+    setStartPayload(null);
     showSession("setup");
-    bridge.dispatchCommand({ type: "STOP_SESSION" });
-    const st = useSettingsStore.getState().settings;
-    const md = useSettingsStore.getState().mode;
-    const finish =
-      md === "offline" ? pipelineRecordStop(st.pipeline) : pipelineOnlineStop(st.pipeline);
-    void finish.catch((error: unknown) => {
-      setLastError(error instanceof Error ? error.message : "Could not stop the pipeline");
-    });
+    if (opts.stopPhaser) {
+      bridge.dispatchCommand({ type: "STOP_SESSION" });
+    }
+    if (opts.stopPipeline) {
+      const st = useSettingsStore.getState().settings;
+      const md = useSettingsStore.getState().mode;
+      const finish =
+        md === "offline"
+          ? pipelineRecordStop(st.pipeline)
+          : pipelineOnlineStop(st.pipeline);
+      void finish.catch((error: unknown) => {
+        setLastError(
+          error instanceof Error ? error.message : "Could not stop the pipeline",
+        );
+      });
+    }
     void exitFullscreen();
+    useHudStore.setState({ sessionStatus: "idle", bciStatusLine: null });
+  };
+
+  // Simulator/online finished all trials → leave Phaser and return to setup.
+  useEffect(() => {
+    if (sessionStatus !== "completed") return;
+    if (viewRef.current !== "session") return;
+    leaveSession({ stopPipeline: true, stopPhaser: false });
+    // leaveSession is stable enough via viewRef; avoid re-binding loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionStatus]);
+
+  const stop = () => {
+    leaveSession({ stopPipeline: true, stopPhaser: true });
   };
   const stopRef = useRef(stop);
   stopRef.current = stop;
@@ -152,20 +178,32 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
       if (md === "offline") {
         await pipelineRecordStart(st.pipeline, session.id);
       } else {
-        await pipelineOnlineStart(st.pipeline);
+        const online = await pipelineOnlineStart(st.pipeline);
+        const wsUrl = online.control_ws_url;
+        if (typeof wsUrl === "string" && wsUrl) {
+          useSettingsStore.getState().setNested("online", {
+            inputAdapter: "websocket",
+            websocketUrl: wsUrl,
+          });
+        }
       }
-      const trials = generateTrialSequence(st, md);
+      // Fresh settings after WS URL update (do not reuse the stale `st` snapshot).
+      const live = useSettingsStore.getState().settings;
+      const trials =
+        md === "online" && live.pipeline.onlineSource === "simulator"
+          ? []
+          : generateTrialSequence(live, md);
+      const payload: CollectorStartPayload = {
+        sessionId: session.id,
+        mode: md,
+        settings: live,
+        trials,
+      };
+      setStartPayload(payload);
       showSession("session");
-      bridge.dispatchCommand({
-        type: "START_SESSION",
-        payload: {
-          sessionId: session.id,
-          mode: md,
-          settings: st,
-          trials,
-        },
-      });
+      // START_SESSION is dispatched by PhaserGameContainer after BootScene is ready.
     } catch (error: unknown) {
+      setStartPayload(null);
       showSession("setup");
       setLastError(error instanceof Error ? error.message : "Could not start session");
       void exitFullscreen();
@@ -192,12 +230,11 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     );
   }
 
-  if (view === "session") {
+  if (view === "session" && startPayload) {
     return (
       <div className={styles.session}>
-        <SessionHUD />
         <div className={styles.stage}>
-          <PhaserGameContainer bridge={bridge} />
+          <PhaserGameContainer bridge={bridge} startPayload={startPayload} />
         </div>
         <p className={styles.stopHint}>Press space to stop</p>
       </div>
