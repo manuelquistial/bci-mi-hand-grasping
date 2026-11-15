@@ -503,9 +503,11 @@ class PipelineService:
         self._windower = ActivityWindower()
         self._live = LiveSignal()
         self._control_hub: Any | None = None
+        self._observe_hub: Any | None = None
         self._control_bridge: Any | None = None
         self._control_registry: str | None = None
         self._control_ws_port = 8090
+        self._observe_ws_port = 8091
         self._frozen_model: Any | None = None
         self._control_decoder_config: Any | None = None
         self._online_subject: str | None = None
@@ -1165,6 +1167,8 @@ class PipelineService:
         self.stop_online()
         frozen = None
         hub = None
+        observe_hub = None
+        observe_ws_port = int(control_ws_port) + 1
         if registry:
             from pipeline.online.control_bridge import ControlWsHub
             from pipeline.online.control_decoder import ControlDecoderConfig
@@ -1173,6 +1177,8 @@ class PipelineService:
             frozen = OnlineModelRegistry().load_model(registry)
             hub = ControlWsHub(port=int(control_ws_port))
             hub.start()
+            observe_hub = ControlWsHub(port=observe_ws_port)
+            observe_hub.start()
             self._control_decoder_config = ControlDecoderConfig(
                 strategy=control_strategy,  # type: ignore[arg-type]
                 window_k=int(control_window_k),
@@ -1189,8 +1195,10 @@ class PipelineService:
             self._online_subject = subject
             self._control_registry = registry
             self._control_ws_port = int(control_ws_port)
+            self._observe_ws_port = observe_ws_port
             self._frozen_model = frozen
             self._control_hub = hub
+            self._observe_hub = observe_hub
             self._control_bridge = None
             self._windower.reset()
             self._online_stop = threading.Event()
@@ -1216,6 +1224,7 @@ class PipelineService:
             "subject": subject,
             "registry": registry,
             "control_ws_url": hub.url if hub is not None else None,
+            "observe_ws_url": observe_hub.url if observe_hub is not None else None,
             "control_classifier": (
                 None if frozen is None else frozen.control_name
             ),
@@ -1229,11 +1238,13 @@ class PipelineService:
             stop = self._online_stop
             listener = self._listener
             hub = self._control_hub
+            observe_hub = self._observe_hub
             bridge = self._control_bridge
             self._proc = None
             self._listener = None
             self._online_stop = None
             self._control_hub = None
+            self._observe_hub = None
             self._control_bridge = None
             self._frozen_model = None
             self._control_registry = None
@@ -1249,6 +1260,8 @@ class PipelineService:
             listener.join(timeout=2)
         if hub is not None:
             hub.stop()
+        if observe_hub is not None:
+            observe_hub.stop()
         self._live.close()
         with self._lock:
             samples = self._online_samples
@@ -1258,7 +1271,7 @@ class PipelineService:
             self._online_source = None
             self._online_dataset = None
             self._windower.reset()
-        if proc is None and listener is None and hub is None:
+        if proc is None and listener is None and hub is None and observe_hub is None:
             return {"stopped": False}
         return {
             "stopped": True,
@@ -1317,6 +1330,7 @@ class PipelineService:
         with self._lock:
             registry = self._control_registry
             hub = self._control_hub
+            observe_hub = self._observe_hub
             bridge = self._control_bridge
         if source is not None:
             online = {
@@ -1329,8 +1343,11 @@ class PipelineService:
                 "activity": activity,
                 "registry": registry,
                 "control_ws_url": None if hub is None else hub.url,
+                "observe_ws_url": None if observe_hub is None else observe_hub.url,
                 "control_samples": None if bridge is None else bridge.published_count,
                 "last_control_sample": None if bridge is None else bridge.last_sample,
+                "last_pipeline_stage": None if bridge is None else bridge.last_stage,
+                "last_stream_frame": None if bridge is None else bridge.last_stream_frame,
             }
         return {"recording": recording, "online": online}
 
@@ -1452,9 +1469,12 @@ class PipelineService:
                 return
         from pipeline.online.control_bridge import LiveControlBridge
 
+        with self._lock:
+            observe_hub = self._observe_hub
         log_dir = self.recordings_root.parent / "batch-results"
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = str(log_dir / f"control-log-{int(time.time())}.jsonl")
+        channel_labels = [str(name) for name in (summary.channel_labels or ())]
         bridge = LiveControlBridge(
             frozen,
             dataset=dataset,
@@ -1464,6 +1484,8 @@ class PipelineService:
             decoder_config=decoder_config,
             subject_id=str(subject or ""),
             log_path=log_path,
+            observe_hub=observe_hub,
+            channel_labels=channel_labels or None,
         )
         with self._lock:
             self._control_bridge = bridge

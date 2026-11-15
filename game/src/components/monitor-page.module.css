@@ -1,0 +1,155 @@
+.page {
+  min-height: 100vh;
+  padding: 1rem 1.25rem 2rem;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #2a2926 0%, transparent 55%),
+    linear-gradient(180deg, #141312 0%, #1c1917 40%, #121110 100%);
+  color: #e7e5e4;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+  font-size: 0.85rem;
+  color: #a8a29e;
+}
+
+.meta strong {
+  color: #e7e5e4;
+  font-weight: 600;
+}
+
+.dot {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+.dotOpen {
+  background: #86efac;
+}
+
+.dotClosed {
+  background: #78716c;
+}
+
+.dotError {
+  background: #f87171;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+@media (max-width: 960px) {
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  margin: 0;
+  padding: 0.65rem 0.75rem 0.75rem;
+  border: 1px solid #3f3a36;
+  border-radius: 10px;
+  background: rgba(28, 25, 23, 0.72);
+}
+
+.panel figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 0.4rem;
+}
+
+.title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.detail {
+  font-size: 0.78rem;
+  color: #a8a29e;
+}
+
+.panel canvas {
+  display: block;
+  width: 100%;
+  border-radius: 6px;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  min-height: 120px;
+  padding: 0.5rem 0.25rem;
+}
+
+.bar {
+  flex: 1;
+  min-width: 0;
+  background: #b7c4a8;
+  border-radius: 3px 3px 0 0;
+}
+
+.probs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.prob {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  background: #292524;
+}
+
+.probLabel {
+  font-size: 0.75rem;
+  color: #a8a29e;
+  margin-bottom: 0.25rem;
+}
+
+.probValue {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.controlRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.empty {
+  color: #78716c;
+  font-size: 0.9rem;
+  padding: 1.5rem 0.25rem;
+}

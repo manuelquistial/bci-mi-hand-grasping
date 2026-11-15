@@ -12,7 +12,7 @@ import logging
 import math
 import threading
 import time
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 from websockets.asyncio.server import serve
@@ -29,6 +29,10 @@ from pipeline.online.control_decoder import (
 from pipeline.online.emg_reject import EMGRejector, EmgRejectConfig
 from pipeline.online.gate import DecisionGate, DecisionGateConfig
 from pipeline.online.model import FrozenOnlineModel
+from pipeline.online.observe import (
+    build_pipeline_stage_message,
+    build_stream_frame_message,
+)
 from pipeline.online.pipeline import OnlinePipeline
 from pipeline.online.stream import OnlineStream
 from pipeline.online.types import Direction, WindowDecision
@@ -96,7 +100,9 @@ class ControlWsHub:
             return
         self._ready.clear()
         self._error = None
-        self._thread = threading.Thread(target=self._run, name="control-ws", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name=f"ws-{self.port}", daemon=True
+        )
         self._thread.start()
         if not self._ready.wait(timeout=5.0):
             raise TimeoutError(f"Control WebSocket failed to bind on {self.url}")
@@ -192,6 +198,8 @@ class LiveControlBridge:
         emit_legacy_v1: bool = True,
         subject_id: str = "",
         log_path: str | None = None,
+        observe_hub: ControlWsHub | None = None,
+        channel_labels: Sequence[str] | None = None,
     ) -> None:
         if int(channel_count) != int(model.channel_count):
             raise ValueError(
@@ -201,8 +209,13 @@ class LiveControlBridge:
         self.model = model
         self.dataset = dataset
         self.hub = hub
+        self.observe_hub = observe_hub
         self.subject_id = subject_id
         self.emit_legacy_v1 = bool(emit_legacy_v1)
+        if channel_labels and len(channel_labels) == int(channel_count):
+            self.channel_labels = [str(name) for name in channel_labels]
+        else:
+            self.channel_labels = [f"Ch{i + 1}" for i in range(int(channel_count))]
         self.stream = OnlineStream(
             sample_rate_hz=sample_rate_hz,
             n_eeg_channels=channel_count,
@@ -241,12 +254,24 @@ class LiveControlBridge:
         self._trial_id: str | None = None
         self._trial_cue: Direction | None = None
         self._last_sample: dict[str, Any] | None = None
+        self._last_stage: dict[str, Any] | None = None
+        self._last_stream_frame: dict[str, Any] | None = None
+        self._samples_since_stream_frame = 0
+        self._stream_frame_every = max(32, int(sample_rate_hz // 4))
         self._log_path = log_path
         self._log_lock = threading.Lock()
 
     @property
     def published_count(self) -> int:
         return self._published
+
+    @property
+    def last_stage(self) -> dict[str, Any] | None:
+        return self._last_stage
+
+    @property
+    def last_stream_frame(self) -> dict[str, Any] | None:
+        return self._last_stream_frame
 
     @property
     def last_sample(self) -> dict[str, Any] | None:
@@ -269,7 +294,12 @@ class LiveControlBridge:
 
     def push_eeg(self, samples: np.ndarray, timestamps: list[float] | tuple[float, ...]) -> None:
         with self._lock:
-            self.stream.push_eeg(np.asarray(samples, dtype=np.float64), timestamps)
+            rows = np.asarray(samples, dtype=np.float64)
+            self.stream.push_eeg(rows, timestamps)
+            self._samples_since_stream_frame += int(rows.shape[0])
+            if self._samples_since_stream_frame >= self._stream_frame_every:
+                self._samples_since_stream_frame = 0
+                self._publish_stream_frame()
             self._poll_windows()
 
     def on_marker(self, timestamp: float, kind: str, raw: str, label: str) -> None:
@@ -454,6 +484,16 @@ class LiveControlBridge:
             self._last_sample = message
             self._published += 1
             self.hub.publish(message)
+            self._publish_stage(
+                window=window,
+                decision=decision,
+                aligned=aligned,
+                margin=margin,
+                p_left=p_left,
+                p_right=p_right,
+                decoded=decoded,
+                classify_ms=classify_ms,
+            )
             if self.emit_legacy_v1 and decoded.valid:
                 # Map control ∈ [-1,1] back to left/right for old adapters.
                 right = 0.5 + 0.5 * float(decoded.control)
@@ -499,6 +539,87 @@ class LiveControlBridge:
                     "classify_ms": classify_ms,
                 }
             )
+
+    def _publish_stream_frame(self) -> None:
+        if self.observe_hub is None:
+            return
+        newest = self.stream.latest_time()
+        if newest is None:
+            return
+        span = min(2.0, max(0.5, self.stream.keep_seconds / 6.0))
+        start = newest - span
+        raw, _ = self.stream.slice_eeg(start, newest + 1e-9, filtered=False)
+        filtered, _ = self.stream.slice_eeg(start, newest + 1e-9, filtered=True)
+        if raw.shape[0] < 8:
+            return
+        message = build_stream_frame_message(
+            channels=self.channel_labels,
+            raw=raw,
+            filtered=filtered,
+            sample_rate_hz=self.stream.sample_rate_hz,
+        )
+        self._last_stream_frame = message
+        self.observe_hub.publish(message)
+
+    def _publish_stage(
+        self,
+        *,
+        window: Any,
+        decision: WindowDecision,
+        aligned: np.ndarray | None,
+        margin: float | None,
+        p_left: float | None,
+        p_right: float | None,
+        decoded: Any,
+        classify_ms: float,
+    ) -> None:
+        if self.observe_hub is None or self._trial_id is None:
+            return
+        raw, _ = self.stream.slice_eeg(window.start, window.end, filtered=False)
+        filtered = np.asarray(window.eeg, dtype=np.float64)
+        if raw.shape[0] == 0:
+            raw = filtered
+        features = None
+        if aligned is not None and decision.classifier:
+            try:
+                features = self.model.raw_features(aligned).reshape(-1)
+            except Exception:  # noqa: BLE001
+                features = None
+        gate = self.gate.state()
+        message = build_pipeline_stage_message(
+            trial_id=self._trial_id,
+            cue=self._trial_cue,
+            window_index=int(window.index),
+            window_start=float(window.start),
+            window_end=float(window.end),
+            channels=self.channel_labels,
+            raw_window=raw,
+            filtered_window=filtered,
+            aligned_trial=aligned,
+            csp_filters=self.model.csp_filters,
+            features=features,
+            p_left=p_left,
+            p_right=p_right,
+            label=decision.label,
+            margin=margin,
+            control=float(decoded.control) if decoded.valid else 0.0,
+            valid=bool(decoded.valid),
+            strategy=str(decoded.strategy),
+            gate={
+                "command": gate.command,
+                "stable": gate.stable,
+                "direction": gate.direction,
+                "valid_count": gate.valid_count,
+                "majority_count": gate.majority_count,
+                "consecutive": gate.consecutive,
+                "reason": gate.reason,
+            },
+            emg_rejected=bool(decision.emg_rejected),
+            reason=str(decision.reason or decoded.reason or ""),
+            classify_ms=classify_ms,
+        )
+        self._last_stage = message
+        self.observe_hub.publish(message)
 
     def _log(self, row: dict[str, Any]) -> None:
         if not self._log_path:

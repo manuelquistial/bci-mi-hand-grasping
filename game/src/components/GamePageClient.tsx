@@ -241,6 +241,19 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     );
   }
 
+  const openMonitor = () => {
+    const pipeline = useSettingsStore.getState().settings.pipeline;
+    const params = new URLSearchParams({
+      baseUrl: pipeline.baseUrl || "http://127.0.0.1:8765",
+      controlPort: String(pipeline.controlWsPort || 8090),
+    });
+    window.open(
+      `/monitor?${params.toString()}`,
+      "bci-online-monitor",
+      "noopener,noreferrer",
+    );
+  };
+
   return (
     <div className={styles.setup}>
       <SettingsPanel screen={initialStep} />
@@ -248,6 +261,8 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
         onStart={start}
         starting={starting}
         label={initialStep === "pre-model" ? "Start pre model" : "Start session"}
+        showMonitor={initialStep === "simulator" || initialStep === "real"}
+        onOpenMonitor={openMonitor}
       />
       {lastError ? (
         <p className={styles.error} role="alert">

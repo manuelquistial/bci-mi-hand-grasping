@@ -18,3 +18,22 @@
   opacity: 0.6;
   cursor: default;
 }
+
+.secondary {
+  background: transparent;
+  color: var(--ink, #e7e5e4);
+  border: 1px solid #57534e;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font-size: 0.95rem;
+  cursor: pointer;
+}
+
+.secondary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.secondary:hover:not(:disabled) {
+  border-color: #a8a29e;
+}
