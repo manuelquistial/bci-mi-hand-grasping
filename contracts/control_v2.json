@@ -1,0 +1,65 @@
+{
+  "$comment": "Documentation-oriented fixture. Source of truth: pipeline/tests/test_contract_schemas.py and pipeline/src/pipeline/online/control_bridge.py (PROTOCOL_VERSION). Keep in sync; tests may load this file later.",
+  "protocol": "control",
+  "version": 2,
+  "transport": {
+    "kind": "websocket",
+    "default_port": 8090,
+    "port_constant": "pipeline.config.CONTROL_WS_PORT",
+    "direction": "pipeline -> game"
+  },
+  "messages": {
+    "bci_control": {
+      "keys": [
+        "version",
+        "type",
+        "trial_id",
+        "sequence",
+        "source_window_end",
+        "issued_at",
+        "control",
+        "valid",
+        "window_index",
+        "strategy",
+        "reason"
+      ],
+      "sample": {
+        "version": 2,
+        "type": "bci_control",
+        "trial_id": "trial_000",
+        "sequence": 1,
+        "source_window_end": 2.0,
+        "issued_at": 1.0,
+        "control": -0.5,
+        "valid": true,
+        "window_index": 0,
+        "strategy": "baseline_proba",
+        "reason": "classified"
+      }
+    },
+    "trial_start": {
+      "keys": [
+        "version",
+        "type",
+        "trial_id",
+        "cue",
+        "subject_id",
+        "source_window_end",
+        "issued_at"
+      ],
+      "sample": {
+        "version": 2,
+        "type": "trial_start",
+        "trial_id": "trial_000",
+        "cue": "left",
+        "subject_id": "S001",
+        "source_window_end": 1.0,
+        "issued_at": 1.0
+      }
+    }
+  },
+  "notes": [
+    "control is a signed scalar: negative = left, positive = right.",
+    "Key sets are frozen by the hexagonal refactor (WP1-WP2); adding or removing a key requires a version bump."
+  ]
+}

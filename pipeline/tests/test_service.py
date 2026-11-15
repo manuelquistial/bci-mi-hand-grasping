@@ -525,10 +525,12 @@ def test_online_real_windows_the_session_activity(tmp_path: Path) -> None:
 
 
 def test_online_simulated_windows_from_the_dataset_marker(tmp_path: Path) -> None:
+    from pipeline.application.ingest_loop import ingest_markers
+
     service = PipelineService(tmp_path, clock=lambda: 0.0)
     with service._lock:
-        service._online_source = "simulator"
-        service._online_dataset = "liu2024_stroke"
+        service._online._online_source = "simulator"
+        service._online._online_dataset = "liu2024_stroke"
 
     class _Markers:
         def pull_chunk(self, timeout: float = 0.0, max_samples: int = 64) -> SampleChunk:
@@ -537,7 +539,7 @@ def test_online_simulated_windows_from_the_dataset_marker(tmp_path: Path) -> Non
                 timestamps=[8.0, 10.0, 14.0],
             )
 
-    service._ingest_markers(_Markers())
+    ingest_markers(service._online, _Markers())
     activity = service.status()["online"]["activity"]
     assert activity["label"] == "left"
     assert activity["code"] == "2"

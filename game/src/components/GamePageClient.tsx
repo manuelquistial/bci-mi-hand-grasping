@@ -5,17 +5,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { GameBridge } from "@/game/bridge/game-bridge";
 import type { CollectorStartPayload } from "@/game/scenes/collector-session-types";
-import { generateTrialSequence } from "@/game/utils/sequence";
 import { useGameBridgeEvents } from "@/hooks/useGameBridgeEvents";
-import { apiCreateSession } from "@/lib/api/client";
+import { pipelinePreModelFilter, type FilterPreview } from "@/lib/pipeline/client";
+import { enterFullscreen, exitFullscreen } from "@/lib/session/fullscreen";
 import {
-  pipelineOnlineStart,
-  pipelineOnlineStop,
-  pipelinePreModelFilter,
-  pipelineRecordStart,
-  pipelineRecordStop,
-  type FilterPreview,
-} from "@/lib/pipeline/client";
+  startSessionRuntime,
+  stopSessionPipeline,
+} from "@/lib/session/session-lifecycle";
 import { useHudStore } from "@/state/hud-store";
 import { usePersistenceStore } from "@/state/persistence-store";
 import { useSettingsStore } from "@/state/settings-store";
@@ -34,24 +30,6 @@ const PhaserGameContainer = dynamic(
 );
 
 type View = "setup" | "session" | "charts";
-
-async function enterFullscreen(): Promise<void> {
-  if (document.fullscreenElement) return;
-  try {
-    await document.documentElement.requestFullscreen();
-  } catch {
-    // The session view still covers the window if the browser refuses.
-  }
-}
-
-async function exitFullscreen(): Promise<void> {
-  if (!document.fullscreenElement) return;
-  try {
-    await document.exitFullscreen();
-  } catch {
-    // Already left fullscreen.
-  }
-}
 
 export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   const bridge = useMemo(() => new GameBridge(), []);
@@ -110,11 +88,7 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     if (opts.stopPipeline) {
       const st = useSettingsStore.getState().settings;
       const md = useSettingsStore.getState().mode;
-      const finish =
-        md === "offline"
-          ? pipelineRecordStop(st.pipeline)
-          : pipelineOnlineStop(st.pipeline);
-      void finish.catch((error: unknown) => {
+      void stopSessionPipeline(md, st).catch((error: unknown) => {
         setLastError(
           error instanceof Error ? error.message : "Could not stop the pipeline",
         );
@@ -173,33 +147,9 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
         return;
       }
       await enterFullscreen();
-      const session = await apiCreateSession(md, st);
-      sessionIdRef.current = session.id;
-      if (md === "offline") {
-        await pipelineRecordStart(st.pipeline, session.id);
-      } else {
-        const online = await pipelineOnlineStart(st.pipeline);
-        const wsUrl = online.control_ws_url;
-        if (typeof wsUrl === "string" && wsUrl) {
-          useSettingsStore.getState().setNested("online", {
-            inputAdapter: "websocket",
-            websocketUrl: wsUrl,
-          });
-        }
-      }
-      // Fresh settings after WS URL update (do not reuse the stale `st` snapshot).
-      const live = useSettingsStore.getState().settings;
-      const trials =
-        md === "online" && live.pipeline.onlineSource === "simulator"
-          ? []
-          : generateTrialSequence(live, md);
-      const payload: CollectorStartPayload = {
-        sessionId: session.id,
-        mode: md,
-        settings: live,
-        trials,
-      };
-      setStartPayload(payload);
+      const started = await startSessionRuntime(md, st);
+      sessionIdRef.current = started.sessionId;
+      setStartPayload(started.payload);
       showSession("session");
       // START_SESSION is dispatched by PhaserGameContainer after BootScene is ready.
     } catch (error: unknown) {

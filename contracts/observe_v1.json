@@ -1,0 +1,107 @@
+{
+  "$comment": "Documentation-oriented fixture. Source of truth: pipeline/tests/test_contract_schemas.py and pipeline/src/pipeline/online/observe.py (OBSERVE_PROTOCOL_VERSION). Series are per-channel lists, decimated for the UI.",
+  "protocol": "observe",
+  "version": 1,
+  "transport": {
+    "kind": "websocket",
+    "default_port": 8091,
+    "port_constant": "pipeline.config.OBSERVE_WS_PORT",
+    "direction": "pipeline -> monitor (game /monitor)"
+  },
+  "messages": {
+    "pipeline_stage": {
+      "keys": [
+        "version",
+        "type",
+        "trial_id",
+        "cue",
+        "window_index",
+        "window_start",
+        "window_end",
+        "channels",
+        "raw",
+        "filtered",
+        "aligned",
+        "csp_traces",
+        "csp_channels",
+        "features",
+        "p_left",
+        "p_right",
+        "label",
+        "margin",
+        "control",
+        "valid",
+        "strategy",
+        "gate",
+        "emg_rejected",
+        "reason",
+        "classify_ms"
+      ],
+      "sample": {
+        "version": 1,
+        "type": "pipeline_stage",
+        "trial_id": "trial_000",
+        "cue": "left",
+        "window_index": 0,
+        "window_start": 0.0,
+        "window_end": 2.0,
+        "channels": ["Ch1", "Ch2", "Ch3", "Ch4"],
+        "raw": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        "filtered": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        "aligned": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
+        "csp_traces": [[0.0, 0.0], [0.0, 0.0]],
+        "csp_channels": ["CSP1", "CSP2"],
+        "features": [0.1, 0.2],
+        "p_left": 0.6,
+        "p_right": 0.4,
+        "label": "left",
+        "margin": 0.5,
+        "control": -0.2,
+        "valid": true,
+        "strategy": "baseline_proba",
+        "gate": {
+          "command": "hold",
+          "stable": false,
+          "reason": "no_valid_windows"
+        },
+        "emg_rejected": false,
+        "reason": "classified",
+        "classify_ms": 1.0
+      }
+    },
+    "stream_frame": {
+      "keys": [
+        "version",
+        "type",
+        "channels",
+        "sample_rate_hz",
+        "raw",
+        "filtered"
+      ],
+      "sample": {
+        "version": 1,
+        "type": "stream_frame",
+        "channels": ["Cz", "C3"],
+        "sample_rate_hz": 250.0,
+        "raw": [[0.0, 0.0], [0.0, 0.0]],
+        "filtered": [[0.0, 0.0], [0.0, 0.0]]
+      }
+    }
+  },
+  "status_online_keys": [
+    "source",
+    "pid",
+    "running",
+    "samples_seen",
+    "emg_samples_seen",
+    "error",
+    "activity",
+    "registry",
+    "control_ws_url",
+    "observe_ws_url",
+    "control_samples",
+    "last_control_sample",
+    "last_pipeline_stage",
+    "last_stream_frame"
+  ]
+}

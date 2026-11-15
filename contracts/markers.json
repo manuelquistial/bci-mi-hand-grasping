@@ -1,0 +1,25 @@
+{
+  "$comment": "Documentation-oriented fixture. Producer: simulator TrialEvent.marker_string / simopenbci.markers_contract. Consumer: pipeline.live.parse_marker_text (reads kind and label, ignores code). Tests: simulator/tests/test_marker_contract.py, pipeline/tests/test_marker_wire_contract.py.",
+  "format": "kind:code:label",
+  "separator": ":",
+  "rules": [
+    "Exactly two separators delimit the first two fields; the label is everything after the second ':' and may itself contain ':'.",
+    "kind is the event class (trial_start, rest, ...), code is the dataset-native code, label is a short display label."
+  ],
+  "examples": [
+    { "marker": "trial_start:2:left", "kind": "trial_start", "code": "2", "label": "left" },
+    { "marker": "trial_start:T1:right", "kind": "trial_start", "code": "T1", "label": "right" },
+    { "marker": "rest:T0:rest", "kind": "rest", "code": "T0", "label": "rest" },
+    { "marker": "trial_start:T1:a:b", "kind": "trial_start", "code": "T1", "label": "a:b" }
+  ],
+  "http_marker_body": {
+    "$comment": "Body of POST /v1/record/marker and POST /v1/online/marker (game/src/lib/pipeline/markers.ts).",
+    "keys": ["kind", "code", "label"],
+    "game_kinds": ["trial_start", "trial_end", "imagery_start", "imagery_end"],
+    "game_codes": { "left": "T1", "right": "T2", "other": "event" },
+    "samples": [
+      { "kind": "trial_start", "code": "T1", "label": "left" },
+      { "kind": "imagery_end", "code": "T2", "label": "right" }
+    ]
+  }
+}

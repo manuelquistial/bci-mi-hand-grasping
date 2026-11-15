@@ -7,8 +7,6 @@ as the live simulator session.
 
 from __future__ import annotations
 
-import json
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -23,9 +21,11 @@ from pipeline.online.log import OnlineLogger
 from pipeline.online.model import FrozenOnlineModel, load_frozen_model
 from pipeline.online.pipeline import OnlinePipeline
 from pipeline.online.stream import OnlineStream
-from pipeline.online.types import Direction, OnlineTrialLog
+from pipeline.online.trial_windows import fused_directions, process_ready_windows
+from pipeline.online.types import OnlineTrialLog
 from pipeline.online.windows import WindowManager
-from pipeline.service import default_simulator_project
+from pipeline.adapters.simulator.dump import dump_markers, dump_stream
+from pipeline.config import default_simulator_project
 
 _HANDS = frozenset({"left", "right"})
 Dumper = Callable[..., dict[str, Any]]
@@ -205,16 +205,22 @@ class ReplayOnlineSession:
             offline_accuracies=self.model.offline_accuracies,
         )
 
+    def _process(
+        self, trial: OnlineTrialLog, windows: WindowManager, *, log_avatar: bool
+    ) -> None:
+        process_ready_windows(
+            pipeline=self.pipeline,
+            logger=self.logger,
+            gates=self.gates,
+            avatar=self.avatar,
+            control_name=self.model.control_name,
+            trial=trial,
+            windows=windows,
+            log_avatar=log_avatar,
+        )
+
     def _poll_imagery(self, trial: OnlineTrialLog, windows: WindowManager) -> bool:
-        for window in windows.poll_ready():
-            decision = self.pipeline.process_window(window)
-            self.logger.log_window(trial, decision)
-            per_head = self.pipeline.decisions_by_classifier(decision)
-            for name, head_decision in per_head.items():
-                gate = self.gates[name].update(head_decision)
-                self.logger.log_gate(trial, gate, classifier=name)
-            avatar = self.avatar.apply(self.gates[self.model.control_name].state())
-            self.logger.log_avatar(trial, avatar)
+        self._process(trial, windows, log_avatar=True)
         if windows.all_complete() or self.avatar.goal_reached:
             return self._end_trial(trial, windows, force=True)
         return True
@@ -227,15 +233,8 @@ class ReplayOnlineSession:
         force: bool,
     ) -> bool:
         del force
-        for window in windows.poll_ready():
-            decision = self.pipeline.process_window(window)
-            self.logger.log_window(trial, decision)
-            per_head = self.pipeline.decisions_by_classifier(decision)
-            for name, head_decision in per_head.items():
-                gate = self.gates[name].update(head_decision)
-                self.logger.log_gate(trial, gate, classifier=name)
-            self.avatar.apply(self.gates[self.model.control_name].state())
-        fused_by = {name: gate.state().direction for name, gate in self.gates.items()}
+        self._process(trial, windows, log_avatar=False)
+        fused_by = fused_directions(self.gates)
         self.logger.end_trial(
             trial,
             fused_label=fused_by.get(self.model.control_name),
@@ -251,82 +250,8 @@ class ReplayOnlineSession:
         if eeg.shape[0] >= 16 and eeg.shape[1] == self.model.channel_count:
             self.pipeline.add_rest(eeg)
 
-    def _dump_stream(
-        self,
-        *,
-        dataset: str,
-        subject: str | None,
-        session_dir: str | None,
-        seconds: float,
-    ) -> dict[str, Any]:
-        command = [
-            "uv",
-            "run",
-            "--project",
-            str(self._project),
-            "simopenbci",
-            "--no-dialog",
-            "--dataset",
-            dataset,
-            "--dump-seconds",
-            str(seconds),
-        ]
-        if session_dir:
-            command.extend(["--file", session_dir])
-        if subject:
-            command.extend(["--subject", subject])
-        completed = subprocess.run(
-            command,
-            cwd=self._project,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "dump-seconds failed").strip()
-            raise RuntimeError(detail.splitlines()[-1])
-        data = json.loads(completed.stdout or "{}")
-        if not isinstance(data, dict) or not data.get("samples"):
-            raise RuntimeError("dump-seconds returned no samples")
-        return data
+    def _dump_stream(self, **kwargs: Any) -> dict[str, Any]:
+        return dump_stream(self._project, **kwargs)
 
-    def _dump_markers(
-        self,
-        *,
-        dataset: str,
-        subject: str | None,
-        session_dir: str | None,
-    ) -> dict[str, Any]:
-        command = [
-            "uv",
-            "run",
-            "--project",
-            str(self._project),
-            "simopenbci",
-            "--no-dialog",
-            "--dataset",
-            dataset,
-            "--dump-trials",
-            "--trial-seconds",
-            "4",
-        ]
-        if session_dir:
-            command.extend(["--file", session_dir])
-        if subject:
-            command.extend(["--subject", subject])
-        completed = subprocess.run(
-            command,
-            cwd=self._project,
-            capture_output=True,
-            text=True,
-            timeout=300,
-            check=False,
-        )
-        if completed.returncode != 0:
-            detail = (completed.stderr or completed.stdout or "dump-trials failed").strip()
-            raise RuntimeError(detail.splitlines()[-1])
-        data = json.loads(completed.stdout or "{}")
-        if not isinstance(data, dict):
-            raise RuntimeError("dump-trials returned invalid JSON")
-        return data
+    def _dump_markers(self, **kwargs: Any) -> dict[str, Any]:
+        return dump_markers(self._project, **kwargs)

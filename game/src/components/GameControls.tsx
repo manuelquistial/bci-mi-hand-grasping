@@ -26,7 +26,7 @@ export function GameControls({
           onClick={onOpenMonitor}
           disabled={starting}
         >
-          Abrir monitor
+          Open monitor
         </button>
       ) : null}
       <button

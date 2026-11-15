@@ -1,7 +1,9 @@
 """
-Interfaz base para cargadores de datasets EEG.
-Permite añadir nuevos formatos (BCI Competition, OpenBMI, etc.) sin cambiar el simulador.
-Soporta datasets con múltiples sujetos mediante list_subjects / resolve_subject_file.
+Base interface for EEG dataset loaders.
+
+New formats (BCI Competition, OpenBMI, etc.) can be added without changing
+the simulator. Multi-subject datasets implement ``list_subjects`` and
+``resolve_subject_file``.
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -11,18 +13,18 @@ from typing import Iterator
 
 @dataclass
 class SubjectRunInfo:
-    """Información de un sujeto y sus runs/sesiones disponibles."""
+    """A subject and the runs/sessions available for it."""
     subject_id: str
-    runs: list[str]  # ej. ["T", "E"]
+    runs: list[str]  # e.g. ["T", "E"]
 
 
 @dataclass
 class DatasetMetadata:
-    """Metadatos del dataset: canales, tasa de muestreo, nombre del stream."""
+    """Dataset metadata: channels, sampling rate, stream name."""
     name: str
     n_channels: int
     sampling_rate: float
-    channel_names: list[str] | None = None  # opcional, para LSL desc
+    channel_names: list[str] | None = None  # optional, used for the LSL description
 
     def __post_init__(self) -> None:
         if self.channel_names is None:
@@ -31,39 +33,40 @@ class DatasetMetadata:
 
 class BaseDatasetLoader(ABC):
     """
-    Cargador abstracto de datasets EEG.
-    Cada implementación concreta sabe leer un formato (Shuqfa 2024, Liu 2024, etc.).
+    Abstract EEG dataset loader.
+    Each concrete implementation reads one format (Shuqfa 2024, Liu 2024, etc.).
     """
 
-    # Identificador corto para registro y detección (ej: "shuqfa2024")
+    # Short identifier for registry and detection (e.g. "shuqfa2024")
     id: str = "base"
     label: str = "Dataset"
 
     @property
     @abstractmethod
     def metadata(self) -> DatasetMetadata:
-        """Metadatos del dataset (canales, sampling rate, nombre)."""
+        """Dataset metadata (channels, sampling rate, name)."""
         pass
 
     @abstractmethod
     def iter_samples(self, file_path: str | Path) -> Iterator[list[float]]:
         """
-        Itera sobre las muestras del archivo.
-        Cada muestra es una lista de n_channels floats (un valor por canal).
+        Iterate over the samples in the file.
+        Each sample is a list of n_channels floats (one value per channel).
         """
         pass
 
     def can_handle(self, file_path: str | Path) -> bool:
         """
-        Indica si este loader puede manejar el archivo (por ruta, extensión, etc.).
-        Por defecto devuelve True; las subclases pueden restringir por path o contenido.
+        Whether this loader can handle the file (by path, extension, etc.).
+        Defaults to True; subclasses may restrict by path or content.
         """
         return True
 
     @classmethod
     def detect_from_path(cls, file_path: str | Path) -> bool:
         """
-        Detección por ruta (carpeta/nombre). Útil para BCI_Competition_IV2a en el path.
+        Detect the dataset from the path (folder or file name),
+        e.g. ``BCI_Competition_IV2a`` in the path.
         """
         return False
 
@@ -75,20 +78,15 @@ class BaseDatasetLoader(ABC):
         """
         return None
 
-
-def standard_data_root(dataset_id: str) -> Path:
-    """On-disk root for a dataset: ``data/<dataset_id>/`` under the working directory."""
-    return Path.cwd() / "data" / dataset_id
-
     # -------------------------------------------------------------------------
-    # Multi-subject datasets (opcional; override en loaders con varios sujetos)
+    # Multi-subject datasets (optional; override in loaders with several subjects)
     # -------------------------------------------------------------------------
 
     @classmethod
     def list_subjects(cls, data_root: str | Path) -> list[SubjectRunInfo]:
         """
-        Lista sujetos y sus runs disponibles en data_root.
-        Por defecto devuelve []; los loaders con múltiples sujetos lo redefinen.
+        List the subjects and runs available under data_root.
+        Defaults to []; multi-subject loaders override this.
         """
         return []
 
@@ -100,7 +98,12 @@ def standard_data_root(dataset_id: str) -> Path:
         run: str | None = None,
     ) -> Path | None:
         """
-        Resuelve la ruta del archivo para un sujeto y opcionalmente un run.
-        Por defecto devuelve None (dataset sin noción de sujetos).
+        Resolve the file path for a subject and, optionally, a run.
+        Defaults to None (dataset without a notion of subjects).
         """
         return None
+
+
+def standard_data_root(dataset_id: str) -> Path:
+    """On-disk root for a dataset: ``data/<dataset_id>/`` under the working directory."""
+    return Path.cwd() / "data" / dataset_id

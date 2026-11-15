@@ -23,11 +23,11 @@ from pipeline.online.model import (
     train_frozen_model,
 )
 from pipeline.preprocess import FilterSpec, apply_notch_then_bandpass
-from pipeline.service import (
-    default_simulator_project,
+from pipeline.adapters.simulator.catalog import (
     query_simulator_subjects,
     query_simulator_trials,
 )
+from pipeline.config import default_simulator_project
 
 TrialLoader = Callable[..., dict[str, Any]]
 SubjectLister = Callable[[Path, str], list[dict[str, str]]]

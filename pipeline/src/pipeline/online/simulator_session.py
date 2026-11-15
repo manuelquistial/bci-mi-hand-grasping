@@ -23,16 +23,14 @@ from pipeline.online.log import OnlineLogger
 from pipeline.online.model import FrozenOnlineModel, load_frozen_model
 from pipeline.online.pipeline import OnlinePipeline
 from pipeline.online.stream import OnlineStream
+from pipeline.online.trial_windows import fused_directions, process_ready_windows
 from pipeline.online.types import Direction, OnlineTrialLog
 from pipeline.online.windows import WindowManager
-from pipeline.service import (
-    SIMULATOR_LSL_NAME,
-    build_simulator_command,
-    default_simulator_project,
-    open_eeg_stream,
-    open_marker_stream,
-    start_simulator_process,
+from pipeline.adapters.lsl.streams import open_eeg_stream, open_marker_stream
+from pipeline.adapters.simulator.process import (
+    build_simulator_command, start_simulator_process,
 )
+from pipeline.config import SIMULATOR_LSL_NAME, default_simulator_project
 
 _HANDS = frozenset({"left", "right"})
 ProcessStarter = Callable[[list[str]], Any]
@@ -82,9 +80,7 @@ class SimulatorOnlineSession:
             model,
             EMGRejector(EmgRejectConfig(threshold=self.config.emg_threshold)),
         )
-        self.gates = {
-            name: DecisionGate(DecisionGateConfig()) for name in model.classifier_names
-        }
+        self.gates = {n: DecisionGate(DecisionGateConfig()) for n in model.classifier_names}
         self.gate = self.gates[model.control_name]
         self.avatar = AvatarController(
             AvatarConfig(steps_to_goal=self.config.steps_to_goal)
@@ -151,16 +147,16 @@ class SimulatorOnlineSession:
             keep_seconds=16.0,
         )
         self.windows = WindowManager(self.stream)
+        wait = min(2.0, self.config.wait_seconds)
         try:
-            self._markers = self._marker_opener(
-                eeg_name=summary.name,
-                wait_seconds=min(2.0, self.config.wait_seconds),
-            )
-        except TypeError:
-            self._markers = self._marker_opener(
-                eeg_name=self.config.lsl_name,
-                wait_seconds=min(2.0, self.config.wait_seconds),
-            )
+            try:
+                self._markers = self._marker_opener(
+                    eeg_name=summary.name, wait_seconds=wait
+                )
+            except TypeError:
+                self._markers = self._marker_opener(
+                    eeg_name=self.config.lsl_name, wait_seconds=wait
+                )
         except TimeoutError:
             self._markers = None
         if self._markers is None:
@@ -260,24 +256,21 @@ class SimulatorOnlineSession:
         assert self.windows is not None
         if not self._imagery_active or self._trial is None:
             return
-        for window in self.windows.poll_ready():
-            decision = self.pipeline.process_window(window)
-            self.logger.log_window(self._trial, decision)
-            per_head = self.pipeline.decisions_by_classifier(decision)
-            for name, head_decision in per_head.items():
-                gate = self.gates[name].update(head_decision)
-                self.logger.log_gate(self._trial, gate, classifier=name)
-            control_gate = self.gates[self.model.control_name].state()
-            avatar = self.avatar.apply(control_gate)
-            self.logger.log_avatar(self._trial, avatar)
+        process_ready_windows(
+            pipeline=self.pipeline,
+            logger=self.logger,
+            gates=self.gates,
+            avatar=self.avatar,
+            control_name=self.model.control_name,
+            trial=self._trial,
+            windows=self.windows,
+        )
         newest = self.stream.latest_time() if self.stream is not None else None
         activity_done = self.windows.all_complete() or (
             newest is not None and self.windows.activity_ended(newest)
         )
         if force or activity_done or self.avatar.goal_reached:
-            fused_by = {
-                name: gate.state().direction for name, gate in self.gates.items()
-            }
+            fused_by = fused_directions(self.gates)
             fused = fused_by.get(self.model.control_name)
             self.logger.end_trial(
                 self._trial,

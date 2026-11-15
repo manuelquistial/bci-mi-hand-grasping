@@ -2,10 +2,17 @@ import Phaser from "phaser";
 
 import type { GameBridge } from "@/game/bridge/game-bridge";
 import type { CollectorStartPayload } from "@/game/scenes/collector-session-types";
+import {
+  emitPhaseChanged,
+  emitSessionCompleted,
+  emitTrialCompleted,
+  emitTrialStarted,
+} from "@/game/scenes/collector-session-events";
 import { nextCollectorAction } from "@/game/scenes/collector-fsm";
 import { GAME_HEIGHT, GAME_WIDTH } from "@/game/config/constants";
 import { CollectorStage } from "@/game/stage/CollectorStage";
 import { scoreForCollection } from "@/game/systems/scoring";
+import { externalRunIdle } from "@/game/systems/external-trial-clock";
 import { transitionTo } from "@/game/systems/trial-fsm";
 import { TelemetryQueue } from "@/game/telemetry/telemetry-queue";
 import type { GameCommand } from "@/types/bridge";
@@ -103,11 +110,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
 
     const trial = this.trials[this.trialIndex];
     if (!trial) return;
-
-    if (this.fsm.phase === "control") {
-      this.onControlFrame(now, trial);
-    }
-
+    if (this.fsm.phase === "control") this.onControlFrame(now, trial);
     this.stepFsm(now, trial);
   }
 
@@ -118,12 +121,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     // Same field as play: avatar centered, no cue yet — waiting for EEG trial.
     this.stage.showForPhase("idle", null, null);
     this.externalIdleSince = this.time.now;
-    this.bridge.emit({
-      type: "PHASE_CHANGED",
-      phase: "idle",
-      trialIndex: Math.max(0, this.trialIndex),
-      blockIndex: 0,
-    });
+    emitPhaseChanged(this.bridge, "idle", Math.max(0, this.trialIndex), 0);
   }
 
   /**
@@ -141,13 +139,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     this.externalIdleSince = 0;
     // Reset avatar to center before imagery/control overlap begins.
     this.stage.showForPhase("idle", trial.targetSide, null);
-    this.bridge.emit({
-      type: "TRIAL_STARTED",
-      trialIndex: trial.index,
-      blockIndex: trial.blockIndex,
-      label: trial.label,
-      targetSide: trial.targetSide,
-    });
+    emitTrialStarted(this.bridge, trial);
     this.enterPhase("control", this.time.now, trial);
   }
 
@@ -169,26 +161,18 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
 
   private stepExternalClock(now: number): void {
     if (this.fsm.phase === "idle") {
-      // After at least one scored trial, silence means the dataset run ended.
-      const scored = this.trials.some((t) => t.outcome != null);
-      if (
-        scored &&
-        this.externalIdleSince > 0 &&
-        now - this.externalIdleSince >= this.externalIdleTimeoutMs
-      ) {
+      if (externalRunIdle(this.trials, this.externalIdleSince, now, this.externalIdleTimeoutMs)) {
         this.finishSession();
       }
       return;
     }
     const trial = this.trials[this.trialIndex];
     if (!trial) return;
-
     if (this.fsm.phase === "control") {
       this.onControlFrame(now, trial);
       // Control ends only on bridge trial_end (not local timeout).
       return;
     }
-
     if (this.fsm.phase === "feedback") {
       const action = nextCollectorAction(this.fsm, now, trial, this.collected);
       if (action.type === "wait") return;
@@ -225,13 +209,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     this.collected = false;
     this.lastOutcome = null;
     this.enterPhase("preparing", this.time.now, trial);
-    this.bridge.emit({
-      type: "TRIAL_STARTED",
-      trialIndex: trial.index,
-      blockIndex: trial.blockIndex,
-      label: trial.label,
-      targetSide: trial.targetSide,
-    });
+    emitTrialStarted(this.bridge, trial);
   }
 
   protected finishSession(): void {
@@ -241,13 +219,13 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     this.fsm = transitionTo("finished", this.time.now);
     this.flushTelemetry();
     const completed = this.trials.filter((t) => t.outcome != null).length;
-    this.bridge.emit({
-      type: "SESSION_COMPLETED",
-      sessionId: this.sessionId,
-      totalScore: this.score,
-      successCount: this.successCount,
-      trialCount: completed > 0 ? completed : this.trials.length,
-    });
+    emitSessionCompleted(
+      this.bridge,
+      this.sessionId,
+      this.score,
+      this.successCount,
+      completed > 0 ? completed : this.trials.length,
+    );
     // Stay on the play field; React leaves the session view on SESSION_COMPLETED.
   }
 
@@ -277,12 +255,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
       this.stage.stopAutoMove();
     }
     this.fsm = transitionTo(phase, now);
-    this.bridge.emit({
-      type: "PHASE_CHANGED",
-      phase,
-      trialIndex: trial.index,
-      blockIndex: trial.blockIndex,
-    });
+    emitPhaseChanged(this.bridge, phase, trial.index, trial.blockIndex);
     this.stage.showForPhase(phase, trial.targetSide, this.lastOutcome);
     if (phase === "control") {
       this.onEnterControl(trial);
@@ -313,17 +286,7 @@ export abstract class CollectorSessionScene extends Phaser.Scene {
     trial.score = delta;
     this.score += delta;
     if (outcome === "success") this.successCount += 1;
-    this.bridge.emit({
-      type: "TRIAL_COMPLETED",
-      trialIndex: trial.index,
-      blockIndex: trial.blockIndex,
-      label: trial.label,
-      targetSide: trial.targetSide,
-      outcome,
-      scoreDelta: delta,
-      trialScore: this.score,
-    });
-    this.bridge.emit({ type: "SCORE_CHANGED", totalScore: this.score });
+    emitTrialCompleted(this.bridge, trial, outcome, delta, this.score);
   }
 
   private flushTelemetry(): void {

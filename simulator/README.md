@@ -1,32 +1,32 @@
 # SimOpenBCI
 
-Simulador que envía señales EEG multicanales a **Lab Streaming Layer (LSL)** leyendo datos desde archivo.
+A simulator that sends multichannel EEG signals to **Lab Streaming Layer (LSL)** by reading data from files.
 
-Arquitectura **Ports & Adapters**: el núcleo (`PlaybackService`) no depende de Qt ni de pylsl; esos son adapters. Los formatos de dataset viven en `dataset_loaders`.
+**Ports & Adapters** architecture: the core (`PlaybackService`) depends on neither Qt nor pylsl; those are adapters. Dataset formats live in `dataset_loaders`.
 
-Gestión de entorno y dependencias con **[uv](https://docs.astral.sh/uv/)**.
+Environment and dependencies are managed with **[uv](https://docs.astral.sh/uv/)**.
 
-Más detalle por dataset y extensión: [`docs/`](docs/README.md).
+More detail per dataset and on extending the simulator: [`docs/`](docs/README.md).
 
-## Qué hace el código
+## What the code does
 
-- **`simopenbci.PlaybackService`**: lee muestras con un loader y las empuja a un `SampleSink` con timing de reloj compensado.
-- **`simopenbci.cli`**: argparse y orquestación (misma CLI pública).
-- **`dataset_loaders`**: cargadores intercambiables (Shuqfa 2024, Liu 2024), con detección por ruta y multi-sujeto.
-- **Entrypoints**: `uv run simopenbci …` o `uv run python main.py …` (por defecto: registro 02 del primer sujeto de Shuqfa 2024).
+- **`simopenbci.PlaybackService`**: reads samples with a loader and pushes them to a `SampleSink` using drift-compensated clock timing.
+- **`simopenbci.cli`** (package): `parser`, `resolve_source`, `dump`, `run_playback`; `main` is wired in `__init__.py`.
+- **`dataset_loaders`**: interchangeable loaders (Shuqfa 2024, Liu 2024) with path-based detection and multi-subject support.
+- **Entrypoints**: `uv run simopenbci …` or `uv run python main.py …` (default: record 02 of the first Shuqfa 2024 subject).
 
-## Setup con uv
+## Setup with uv
 
-Requisitos: [uv](https://docs.astral.sh/uv/getting-started/installation/) y Python 3.11+ (el proyecto fija `3.11` en `.python-version`).
+Requirements: [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.11+ (the project pins `3.11` in `.python-version`).
 
 ```bash
-cd /Users/manueljurado/implementacion_articulos/simulator
+cd simulator
 
-# Crea .venv, instala deps de runtime + grupo dev (pytest) y el paquete en editable
+# Creates .venv, installs runtime deps + the dev group (pytest) and the package in editable mode
 uv sync --all-groups
 ```
 
-Comandos habituales (no hace falta activar el venv a mano):
+Common commands (no need to activate the venv by hand):
 
 ```bash
 uv run simopenbci --help
@@ -34,7 +34,7 @@ uv run pytest -q
 uv run python main.py --no-dialog
 ```
 
-Si prefieres el shell activado:
+If you prefer an activated shell:
 
 ```bash
 source .venv/bin/activate
@@ -42,17 +42,17 @@ simopenbci --help
 pytest -q
 ```
 
-### Añadir dependencias
+### Adding dependencies
 
 ```bash
-uv add nombre-paquete          # runtime → pyproject.toml + uv.lock
-uv add --dev nombre-paquete    # grupo dev
-uv sync --all-groups           # re-sincronizar tras cambios
+uv add package-name          # runtime → pyproject.toml + uv.lock
+uv add --dev package-name    # dev group
+uv sync --all-groups         # re-sync after changes
 ```
 
 ### macOS — liblsl
 
-`pylsl` necesita la biblioteca nativa **liblsl**:
+`pylsl` needs the native **liblsl** library:
 
 ```bash
 brew install labstreaminglayer/tap/lsl
@@ -61,40 +61,43 @@ mkdir -p "$PYTHON_SITE/pylsl/lib"
 cp "$(brew --prefix lsl)"/lib/liblsl*.dylib "$PYTHON_SITE/pylsl/lib/"
 ```
 
-## Datasets soportados
+## Supported datasets
 
-### Liu et al. 2024 (imaginación de agarre, ACV)
+### Liu et al. 2024 (grasp motor imagery, stroke)
 
-- **Dataset**: 50 pacientes, 40 ensayos izquierda/derecha, 500 Hz.
-- **Uso**: `--dataset liu2024_stroke`, `--subject 1` o `--subject sub-01`.
-- Ver [`docs/liu2024-stroke-mi.md`](docs/liu2024-stroke-mi.md).
+- **Dataset**: 50 patients, 40 left/right trials, 500 Hz.
+- **Usage**: `--dataset liu2024_stroke`, `--subject 1` or `--subject sub-01`.
+- See [`docs/liu2024-stroke-mi.md`](docs/liu2024-stroke-mi.md).
 
 ### Shuqfa et al. 2024 (PhysioNet EEG Motor Movement/Imagery)
 
-- **Dataset**: el eegmmidb de PhysioNet, depurado: 103 sujetos, 12 registros de tarea, 64 canales, 160 Hz. Un CSV por registro.
-- **Uso**: `--dataset shuqfa2024`, `--subject 1`, `--run 2`. Sin `--run` se envía el registro `02` (imaginación unilateral: reposo, izquierda, derecha).
-- Ver [`docs/shuqfa2024.md`](docs/shuqfa2024.md).
+- **Dataset**: the cleaned PhysioNet eegmmidb: 103 subjects, 12 task runs, 64 channels, 160 Hz. One CSV per run.
+- **Usage**: `--dataset shuqfa2024`, `--subject 1`, `--run 2`. Without `--run`, run `02` is sent (unilateral imagery: rest, left, right).
+- See [`docs/shuqfa2024.md`](docs/shuqfa2024.md).
 
-### CSV/TXT genérico
+### Generic CSV/TXT
 
-- Líneas que empiezan con `%` se ignoran; columnas 1–8 por defecto = 8 canales.
-- Stream `BioSemi`, 8 canales, 250 Hz.
+- Lines starting with `%` are ignored; columns 1–8 by default = 8 channels.
+- Stream `BioSemi`, 8 channels, 250 Hz.
 
-### Añadir nuevos datasets
+### Adding new datasets
 
-1. Heredar de `dataset_loaders.base.BaseDatasetLoader` (`metadata`, `iter_samples`).
-2. Opcional: `detect_from_path()`, `default_data_root()`, `list_subjects` / `resolve_subject_file`.
-3. Registrar en `dataset_loaders/__init__.py` → `LOADERS`.
+1. Inherit from `dataset_loaders.base.BaseDatasetLoader` (`metadata`, `iter_samples`).
+2. Optional: `detect_from_path()`, `default_data_root()`, `list_subjects` / `resolve_subject_file`.
+3. Register in `dataset_loaders/__init__.py` → `LOADERS`.
 
-Ver [`docs/multi-subject.md`](docs/multi-subject.md) para multi-sujeto.
+See [`docs/multi-subject.md`](docs/multi-subject.md) for multi-subject support.
 
-## Marcadores de trial (LSL Markers)
+## Trial markers (LSL Markers)
 
-Si junto al TXT existe un sidecar ``<archivo>.events.csv``, el simulador abre un
-segundo stream LSL ``<eeg_name>_Markers`` y emite un marcador en el instante de
-cada evento (p. ej. inicio de trial).
+If a ``<file>.events.csv`` sidecar sits next to the TXT, the simulator opens a
+second LSL stream ``<eeg_name>_Markers`` and emits one marker at the instant of
+each event (e.g. trial start).
 
-Formato CSV:
+Each marker is a single string with the wire format `kind:code:label`
+(see `simopenbci/markers_contract.py` and [`../contracts/markers.json`](../contracts/markers.json)).
+
+CSV format:
 
 ```csv
 sample_index,code,label,kind
@@ -102,58 +105,58 @@ sample_index,code,label,kind
 1840,T0,rest,rest
 ```
 
-- **Shuqfa 2024**: los marcadores salen del CSV de anotaciones del mismo registro.
+- **Shuqfa 2024**: markers come from the annotations CSV of the same run.
 
 ```bash
 uv run simopenbci --dataset shuqfa2024 --subject S001 --run 2 \
   --lsl-name OpenBCI_EEG --no-dialog
 ```
 
-Desactivar marcadores: `--no-markers`. Ruta explícita: `--events path/to/file.events.csv`.
+Disable markers: `--no-markers`. Explicit path: `--events path/to/file.events.csv`.
 
-### Sesión grabada por el pipeline
+### Session recorded by the pipeline
 
-El pipeline escribe la carpeta (`signal.f32`, `time.f64`, `markers.jsonl`, `session.json`). Este simulador solo la lee:
+The pipeline writes the folder (`signal.f32`, `time.f64`, `markers.jsonl`, `session.json`). This simulator only reads it:
 
 ```bash
-uv run simopenbci --dataset recorded_session --file /ruta/a/la/sesion \
+uv run simopenbci --dataset recorded_session --file /path/to/session \
   --lsl-name OpenBCI_EEG --no-dialog
 ```
 
-Los demás datasets siguen en sus loaders.
+The other datasets stay in their own loaders.
 
-## Uso por línea de comandos
+## Command-line usage
 
-Sin argumentos, streamea el registro `02` del primer sujeto de Shuqfa 2024 desde `data/shuqfa2024/`:
+With no arguments, it streams record `02` of the first Shuqfa 2024 subject from `data/shuqfa2024/`:
 
 ```bash
 uv run simopenbci
-# equivalente headless:
+# headless equivalent:
 uv run simopenbci --no-dialog
 ```
 
 ```bash
-# PhysioNet depurado (Shuqfa 2024), registro de imaginación unilateral
+# Cleaned PhysioNet (Shuqfa 2024), unilateral imagery record
 uv run simopenbci --dataset shuqfa2024 --subject S001 --run 2 --no-dialog
 
-# Sujeto / run concreto
+# Specific subject / run
 uv run simopenbci --dataset liu2024_stroke --subject sub-01 --no-dialog
 
-# Listar sujetos
+# List subjects
 uv run simopenbci --dataset shuqfa2024 --list-subjects
 
-# Solo si quieres elegir un archivo a mano
+# Only if you want to pick a file by hand
 uv run simopenbci --pick-file
 ```
 
-## Requisitos
+## Requirements
 
 - **uv** + **Python 3.11+**
-- **PyQt5**: solo cuando hay diálogos (sin `--no-dialog`).
-- **pylsl** (+ **liblsl** en macOS).
-- **pytest**: grupo `dev` (`uv sync --all-groups`).
+- **PyQt5**: only when dialogs are used (without `--no-dialog`).
+- **pylsl** (+ **liblsl** on macOS).
+- **pytest**: `dev` group (`uv sync --all-groups`).
 
-### Formato genérico (ejemplo)
+### Generic format (example)
 
 ```
 %,header,optional
@@ -168,55 +171,52 @@ uv sync --all-groups
 uv run pytest -q
 ```
 
-Los tests usan `RecordingSink` (sin LSL). El test de `LslSampleSink` se omite si liblsl no está disponible.
+Tests use `RecordingSink` (no LSL). The `LslSampleSink` test is skipped when liblsl is not available.
 
-## Conexión con articulo_1
+## Connection with the pipeline
+
+Start the simulator as an LSL source and let the pipeline (or the game via the pipeline HTTP API) consume it:
 
 ```bash
 uv run simopenbci --dataset shuqfa2024 --subject S001 --run 2 \
   --channels 8 --lsl-name OpenBCI_EEG --no-dialog
 ```
 
-En articulo_1:
+The pipeline's default LSL name is `OpenBCI_EEG`. See [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md) and [`../scripts/e2e_checklist.md`](../scripts/e2e_checklist.md).
 
-```bash
-python scripts/run_openbci_lsl.py --model models/mi_mdmf.joblib --lsl-name OpenBCI_EEG --use-stream-order
-```
-
-Ver [CONEXION_SIMULADOR.md](../articulo_1/CONEXION_SIMULADOR.md).
-
-## Estructura del proyecto
+## Project layout
 
 ```
 simulator/
-├── main.py                    # Entrypoint CLI
-├── simopenbci/                # Núcleo Ports & Adapters
+├── main.py                    # CLI entrypoint
+├── simopenbci/                # Ports & Adapters core
 │   ├── playback.py            # PlaybackService
 │   ├── config.py              # PlaybackConfig
 │   ├── ports.py               # SampleSink, Notifier, Clock
 │   ├── clock.py               # RealtimeClock, InstantClock
+│   ├── markers_contract.py    # kind:code:label wire contract
 │   ├── sinks/                 # LslSampleSink, RecordingSink
 │   ├── notifiers/             # ConsoleNotifier, QtNotifier
 │   ├── gui.py                 # Qt file picker (lazy)
-│   └── cli.py                 # argparse + orquestación
-├── dataset_loaders/           # Loaders extensibles
+│   └── cli/                   # argparse + orchestration (package)
+├── dataset_loaders/           # Extensible loaders
 │   ├── base.py
-│   ├── parsing.py             # Parseo CSV/TXT compartido
+│   ├── parsing.py             # Shared CSV/TXT parsing
 │   ├── liu2024_stroke_mi.py
 │   ├── shuqfa2024.py
 │   ├── edf.py
 │   └── generic_csv.py
-├── data/                      # Datasets locales (gitignored): data/<id>/
+├── data/                      # Local datasets (gitignored): data/<id>/
 │   ├── liu2024_stroke/
 │   └── shuqfa2024/
-├── docs/                      # Guías (datasets, multi-sujeto)
+├── docs/                      # Guides (datasets, multi-subject)
 │   ├── README.md
 │   ├── liu2024-stroke-mi.md
 │   ├── shuqfa2024.md
 │   └── multi-subject.md
 ├── tests/                     # pytest + fixtures
-├── pyproject.toml             # proyecto + deps (uv)
-├── uv.lock                    # lockfile reproducible
+├── pyproject.toml             # project + deps (uv)
+├── uv.lock                    # reproducible lockfile
 ├── .python-version            # 3.11
 └── README.md
 ```
