@@ -49,16 +49,29 @@ describe("observe helpers", () => {
     }
   });
 
-  it("parses stream_frame messages", () => {
+  it("parses stream_frame messages with timeline cues", () => {
     const message = parseObserveMessage({
       version: 1,
       type: "stream_frame",
       channels: ["Cz"],
       sample_rate_hz: 250,
+      t_start: 10,
+      t_end: 12,
+      imagery_onset: 11,
+      markers: [
+        { t: 11, kind: "trial_start", label: "left", role: "imagery_onset" },
+      ],
+      windows: [{ index: 0, start: 11, end: 13 }],
       raw: [[1, 2, 3]],
       filtered: [[0, 1, 2]],
     });
     expect(message?.type).toBe("stream_frame");
+    if (message?.type === "stream_frame") {
+      expect(message.t_start).toBe(10);
+      expect(message.imagery_onset).toBe(11);
+      expect(message.markers[0]?.role).toBe("imagery_onset");
+      expect(message.windows[0]?.index).toBe(0);
+    }
   });
 
   it("rejects unknown types", () => {

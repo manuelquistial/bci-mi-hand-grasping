@@ -18,6 +18,7 @@
         "window_index",
         "window_start",
         "window_end",
+        "imagery_onset",
         "channels",
         "raw",
         "filtered",
@@ -25,6 +26,7 @@
         "csp_traces",
         "csp_channels",
         "features",
+        "predictions",
         "p_left",
         "p_right",
         "label",
@@ -45,13 +47,85 @@
         "window_index": 0,
         "window_start": 0.0,
         "window_end": 2.0,
-        "channels": ["Ch1", "Ch2", "Ch3", "Ch4"],
-        "raw": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
-        "filtered": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
-        "aligned": [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [0.0, 0.0]],
-        "csp_traces": [[0.0, 0.0], [0.0, 0.0]],
-        "csp_channels": ["CSP1", "CSP2"],
-        "features": [0.1, 0.2],
+        "imagery_onset": 0.0,
+        "channels": [
+          "Ch1",
+          "Ch2",
+          "Ch3",
+          "Ch4"
+        ],
+        "raw": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "filtered": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "aligned": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "csp_traces": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "csp_channels": [
+          "CSP1",
+          "CSP2"
+        ],
+        "features": [
+          0.1,
+          0.2
+        ],
         "p_left": 0.6,
         "p_right": 0.4,
         "label": "left",
@@ -66,7 +140,23 @@
         },
         "emg_rejected": false,
         "reason": "classified",
-        "classify_ms": 1.0
+        "classify_ms": 1.0,
+        "predictions": [
+          {
+            "classifier": "linear_svm",
+            "label": "left",
+            "score": 0.8,
+            "p_left": 0.7,
+            "p_right": 0.3
+          },
+          {
+            "classifier": "logistic_regression",
+            "label": "left",
+            "score": 0.6,
+            "p_left": 0.65,
+            "p_right": 0.35
+          }
+        ]
       }
     },
     "stream_frame": {
@@ -75,16 +165,60 @@
         "type",
         "channels",
         "sample_rate_hz",
+        "t_start",
+        "t_end",
+        "imagery_onset",
+        "markers",
+        "windows",
         "raw",
         "filtered"
       ],
       "sample": {
         "version": 1,
         "type": "stream_frame",
-        "channels": ["Cz", "C3"],
+        "channels": [
+          "Cz",
+          "C3"
+        ],
         "sample_rate_hz": 250.0,
-        "raw": [[0.0, 0.0], [0.0, 0.0]],
-        "filtered": [[0.0, 0.0], [0.0, 0.0]]
+        "t_start": 10.0,
+        "t_end": 12.0,
+        "imagery_onset": 11.0,
+        "markers": [
+          {
+            "t": 11.0,
+            "kind": "trial_start",
+            "label": "left",
+            "role": "imagery_onset"
+          }
+        ],
+        "windows": [
+          {
+            "index": 0,
+            "start": 11.0,
+            "end": 13.0
+          }
+        ],
+        "raw": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        "filtered": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ]
       }
     }
   },

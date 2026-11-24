@@ -35,6 +35,8 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
   const bridge = useMemo(() => new GameBridge(), []);
   const sessionIdRef = useRef<string | null>(null);
   const viewRef = useRef<View>("setup");
+  /** Serialize pipeline stop/start so Space→Start cannot race hub teardown. */
+  const pipelineGate = useRef(Promise.resolve<void>(undefined));
   useGameBridgeEvents(bridge, sessionIdRef);
 
   const settings = useSettingsStore((s) => s.settings);
@@ -88,11 +90,14 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     if (opts.stopPipeline) {
       const st = useSettingsStore.getState().settings;
       const md = useSettingsStore.getState().mode;
-      void stopSessionPipeline(md, st).catch((error: unknown) => {
-        setLastError(
-          error instanceof Error ? error.message : "Could not stop the pipeline",
-        );
-      });
+      const stopping = stopSessionPipeline(md, st)
+        .then(() => undefined)
+        .catch((error: unknown) => {
+          setLastError(
+            error instanceof Error ? error.message : "Could not stop the pipeline",
+          );
+        });
+      pipelineGate.current = pipelineGate.current.then(() => stopping);
     }
     void exitFullscreen();
     useHudStore.setState({ sessionStatus: "idle", bciStatusLine: null });
@@ -139,6 +144,8 @@ export function GamePageClient({ initialStep }: { initialStep: SetupScreen }) {
     setLastError(null);
     setStarting(true);
     try {
+      // Wait out any in-flight stop from Space / completed session.
+      await pipelineGate.current;
       if (initialStep === "pre-model") {
         const next = await pipelinePreModelFilter(st);
         setPreview(next);

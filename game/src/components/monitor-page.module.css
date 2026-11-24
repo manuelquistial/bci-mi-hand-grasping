@@ -61,12 +61,85 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.grid > .panel {
+  min-width: 0;
+}
+
+.span2 {
+  grid-column: 1 / -1;
 }
 
 @media (max-width: 960px) {
   .grid {
     grid-template-columns: 1fr;
   }
+}
+
+.cascade {
+  margin-bottom: 0.85rem;
+}
+
+.cascadeList {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.35rem;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  align-items: center;
+}
+
+.cascadeList li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.cascadeStep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.cascadeReady .cascadeStep {
+  background: #365314;
+  color: #ecfccb;
+}
+
+.cascadeWait .cascadeStep {
+  background: #44403c;
+  color: #a8a29e;
+}
+
+.cascadeReady {
+  color: #e7e5e4;
+}
+
+.cascadeWait {
+  color: #78716c;
+}
+
+.cascadeArrow {
+  margin-left: 0.15rem;
+  color: #57534e;
+}
+
+.barLabel {
+  display: block;
+  font-size: 0.65rem;
+  text-align: center;
+  color: #1c1917;
+  padding-top: 0.15rem;
+  overflow: hidden;
 }
 
 .panel {

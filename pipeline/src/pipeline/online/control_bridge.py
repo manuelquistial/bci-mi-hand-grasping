@@ -20,20 +20,13 @@ from pipeline.online.control_decoder import (
     ControlDecoderConfig,
     ControlStrategy,
 )
-from pipeline.online.control_inference import (
-    build_decoder,
-    decode_evaluation,
-    evaluate_window,
-)
+from pipeline.online.control_inference import build_decoder
 from pipeline.online.control_legacy import (
     decision_to_control_sample,
     legacy_neutral_sample,
-    legacy_sample_from_control,
 )
 from pipeline.online.control_messages import (
     PROTOCOL_VERSION,
-    control_message,
-    inference_log,
     invalidate_message,
     trial_end_log,
     trial_end_message,
@@ -42,7 +35,12 @@ from pipeline.online.control_messages import (
     trial_start_message,
 )
 from pipeline.online.control_log import JsonlEventLog
-from pipeline.online.control_observe import ObservePublisher, resolve_channel_labels
+from pipeline.online.control_observe import (
+    ObservePublisher,
+    RecentMarkers,
+    resolve_channel_labels,
+)
+from pipeline.online.control_poll import poll_and_publish
 from pipeline.online.emg_reject import EMGRejector, EmgRejectConfig
 from pipeline.online.gate import DecisionGate, DecisionGateConfig
 from pipeline.online.model import FrozenOnlineModel
@@ -122,6 +120,7 @@ class LiveControlBridge:
         self._last_sample: dict[str, Any] | None = None
         self._samples_since_stream_frame = 0
         self._stream_frame_every = max(32, int(sample_rate_hz // 4))
+        self._markers = RecentMarkers()
         self._events = JsonlEventLog(log_path)
 
     @property
@@ -155,35 +154,74 @@ class LiveControlBridge:
             self._trial_id = None
             self._trial_cue = None
 
+    def _flush_observe(
+        self,
+        *,
+        stream_meta: dict[str, Any] | None = None,
+        stages: Sequence[dict[str, Any]] | None = None,
+    ) -> None:
+        """Publish observe traffic outside ``_lock`` so control never waits on it."""
+        if stream_meta is not None:
+            self._observe.publish_stream_frame(
+                self.stream,
+                markers=stream_meta["markers"],
+                windows=stream_meta["windows"],
+                imagery_onset=stream_meta["imagery_onset"],
+            )
+        for job in stages or ():
+            trial_id = job.pop("trial_id", None)
+            self._observe.publish_stage(trial_id, **job)
+
     def push_eeg(self, samples: np.ndarray, timestamps: list[float] | tuple[float, ...]) -> None:
+        stream_meta: dict[str, Any] | None = None
+        stages: list[dict[str, Any]] = []
         with self._lock:
             rows = np.asarray(samples, dtype=np.float64)
             self.stream.push_eeg(rows, timestamps)
             self._samples_since_stream_frame += int(rows.shape[0])
             if self._samples_since_stream_frame >= self._stream_frame_every:
                 self._samples_since_stream_frame = 0
-                self._observe.publish_stream_frame(self.stream)
-            self._poll_windows()
+                onset = self.windows.onset if self._imagery_active else None
+                spans = self.windows.spans() if self._imagery_active else []
+                stream_meta = {
+                    "markers": self._markers.items,
+                    "windows": [
+                        {"index": i, "start": s, "end": e}
+                        for i, (s, e) in enumerate(spans)
+                    ],
+                    "imagery_onset": onset,
+                }
+            stages = poll_and_publish(self)
+        self._flush_observe(stream_meta=stream_meta, stages=stages)
 
     def on_marker(self, timestamp: float, kind: str, raw: str, label: str) -> None:
+        stages: list[dict[str, Any]] = []
         with self._lock:
+            self._markers.note(
+                dataset=self.dataset,
+                timestamp=timestamp,
+                kind=kind,
+                label=label,
+                newest=self.stream.latest_time(),
+            )
             if kind == "rest" or label == "rest":
                 self._close_rest(timestamp)
                 self._rest_start = timestamp
-                return
-            self._close_rest(timestamp)
-            if kind in {"imagery_start", "imagery_end"}:
+            elif kind in {"imagery_start", "imagery_end"}:
+                self._close_rest(timestamp)
                 if kind == "imagery_start" and label in _HANDS:
-                    self._begin_imagery(timestamp, label)  # type: ignore[arg-type]
+                    stages = self._begin_imagery(timestamp, label)  # type: ignore[arg-type]
                 elif kind == "imagery_end":
-                    self._finish_imagery(force=True)
-                return
-            if not is_activity_onset(self.dataset, kind, label):
-                return
-            if label not in _HANDS:
-                self._finish_imagery(force=True)
-                return
-            self._begin_imagery(timestamp, label)  # type: ignore[arg-type]
+                    stages = self._finish_imagery(force=True)
+            elif not is_activity_onset(self.dataset, kind, label):
+                self._close_rest(timestamp)
+            elif label not in _HANDS:
+                self._close_rest(timestamp)
+                stages = self._finish_imagery(force=True)
+            else:
+                self._close_rest(timestamp)
+                stages = self._begin_imagery(timestamp, label)  # type: ignore[arg-type]
+        self._flush_observe(stages=stages)
 
     def on_marker_text(self, timestamp: float, raw: str) -> None:
         kind, label = parse_marker_text(str(raw))
@@ -200,8 +238,8 @@ class LiveControlBridge:
         if eeg.shape[0] >= 16 and eeg.shape[1] == self.model.channel_count:
             self.pipeline.add_rest(eeg)
 
-    def _begin_imagery(self, onset: float, cue: Direction) -> None:
-        self._finish_imagery(force=True)
+    def _begin_imagery(self, onset: float, cue: Direction) -> list[dict[str, Any]]:
+        stages = self._finish_imagery(force=True)
         self.gate.reset()
         self.decoder.reset_trial()
         self.windows.begin(onset)
@@ -218,11 +256,12 @@ class LiveControlBridge:
         )
         self.hub.publish(start)
         self._events.write(trial_start_log(start))
+        return stages
 
-    def _finish_imagery(self, *, force: bool) -> None:
+    def _finish_imagery(self, *, force: bool) -> list[dict[str, Any]]:
         if not self._imagery_active:
-            return
-        self._poll_windows()
+            return []
+        stages = poll_and_publish(self)
         if force or self.windows.all_complete():
             trial_id = self._trial_id
             self._imagery_active = False
@@ -233,7 +272,6 @@ class LiveControlBridge:
             self._last_sample = invalidate
             self.hub.publish(invalidate)
             if self.emit_legacy_v1:
-                # Neutral legacy sample so v1 clients stop holding last bias.
                 self.hub.publish(legacy_neutral_sample())
             gate = self.gate.state()
             cue = self._trial_cue
@@ -245,50 +283,4 @@ class LiveControlBridge:
             self._events.write(trial_end_log(end, gate.reason))
             self._trial_id = None
             self._trial_cue = None
-
-    def _poll_windows(self) -> None:
-        if not self._imagery_active or self._trial_id is None:
-            return
-        for window in self.windows.poll_ready():
-            ev = evaluate_window(
-                self.pipeline, self.model, self.decoder, self.gate, window
-            )
-            decoded = decode_evaluation(self.decoder, ev)
-            self._sequence += 1
-            message = control_message(
-                trial_id=self._trial_id,
-                sequence=self._sequence,
-                window=window,
-                decoded=decoded,
-            )
-            self._last_sample = message
-            self._published += 1
-            self.hub.publish(message)
-            self._observe.publish_stage(
-                self._trial_id,
-                stream=self.stream,
-                model=self.model,
-                gate_state=self.gate.state(),
-                cue=self._trial_cue,
-                window=window,
-                ev=ev,
-                decoded=decoded,
-            )
-            if self.emit_legacy_v1:
-                self.hub.publish(
-                    legacy_sample_from_control(decoded.control, self._trial_id)
-                    if decoded.valid
-                    else legacy_neutral_sample(self._trial_id)
-                )
-            self._events.write(
-                inference_log(
-                    subject_id=self.subject_id,
-                    trial_id=self._trial_id,
-                    cue=self._trial_cue,
-                    window=window,
-                    decision=ev.decision,
-                    decoded=decoded,
-                    ea_ready=self.pipeline.ea_ready,
-                    classify_ms=ev.classify_ms,
-                )
-            )
+        return stages

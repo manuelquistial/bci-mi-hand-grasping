@@ -85,6 +85,8 @@ def build_pipeline_stage_message(
     emg_rejected: bool,
     reason: str,
     classify_ms: float,
+    imagery_onset: float | None = None,
+    predictions: Sequence[dict[str, Any]] | None = None,
     max_points: int = DEFAULT_MAX_POINTS,
 ) -> dict[str, Any]:
     """Versioned observability event for one imagery window."""
@@ -93,9 +95,15 @@ def build_pipeline_stage_message(
         csp_traces = csp_component_traces(
             aligned_trial, csp_filters, max_points=max_points
         )
+    # Keep EA display to the same capped montage as raw/filtered channels.
+    aligned_view = aligned_trial
+    if aligned_view is not None:
+        aligned_arr = np.asarray(aligned_view, dtype=np.float64)
+        n_show = min(len(channels), aligned_arr.shape[0] if aligned_arr.ndim == 2 else 0)
+        aligned_view = aligned_arr[:n_show] if n_show else None
     aligned_series = (
-        downsample_channels_by_time(aligned_trial, max_points=max_points)
-        if aligned_trial is not None
+        downsample_channels_by_time(aligned_view, max_points=max_points)
+        if aligned_view is not None
         else []
     )
     return {
@@ -106,6 +114,7 @@ def build_pipeline_stage_message(
         "window_index": int(window_index),
         "window_start": float(window_start),
         "window_end": float(window_end),
+        "imagery_onset": None if imagery_onset is None else float(imagery_onset),
         "channels": list(channels),
         "raw": downsample_samples_by_channel(raw_window, max_points=max_points),
         "filtered": downsample_samples_by_channel(
@@ -115,6 +124,7 @@ def build_pipeline_stage_message(
         "csp_traces": csp_traces,
         "csp_channels": [f"CSP{i + 1}" for i in range(len(csp_traces))],
         "features": feature_bars(features) if features is not None else [],
+        "predictions": list(predictions or ()),
         "p_left": None if p_left is None else float(p_left),
         "p_right": None if p_right is None else float(p_right),
         "label": label,
@@ -135,14 +145,24 @@ def build_stream_frame_message(
     raw: np.ndarray,
     filtered: np.ndarray,
     sample_rate_hz: float,
+    t_start: float,
+    t_end: float,
+    markers: Sequence[dict[str, Any]] | None = None,
+    windows: Sequence[dict[str, Any]] | None = None,
+    imagery_onset: float | None = None,
     max_points: int = DEFAULT_MAX_POINTS,
 ) -> dict[str, Any]:
-    """Continuous ring-buffer frame (raw + causal filtered)."""
+    """Continuous ring-buffer frame (raw + causal filtered) with timeline cues."""
     return {
         "version": OBSERVE_PROTOCOL_VERSION,
         "type": "stream_frame",
         "channels": list(channels),
         "sample_rate_hz": float(sample_rate_hz),
+        "t_start": float(t_start),
+        "t_end": float(t_end),
+        "imagery_onset": None if imagery_onset is None else float(imagery_onset),
+        "markers": list(markers or ()),
+        "windows": list(windows or ()),
         "raw": downsample_samples_by_channel(raw, max_points=max_points),
         "filtered": downsample_samples_by_channel(filtered, max_points=max_points),
     }

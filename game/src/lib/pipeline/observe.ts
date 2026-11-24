@@ -10,6 +10,27 @@ export type ObserveGate = {
   reason?: string;
 };
 
+export type ObserveMarker = {
+  t: number;
+  kind: string;
+  label: string;
+  role: string;
+};
+
+export type ObserveWindowBand = {
+  index: number;
+  start: number;
+  end: number;
+};
+
+export type ObserveHeadPrediction = {
+  classifier: string;
+  label: string | null;
+  score: number | null;
+  p_left: number | null;
+  p_right: number | null;
+};
+
 export type PipelineStageMessage = {
   version: number;
   type: "pipeline_stage";
@@ -18,6 +39,7 @@ export type PipelineStageMessage = {
   window_index: number;
   window_start: number;
   window_end: number;
+  imagery_onset: number | null;
   channels: string[];
   raw: number[][];
   filtered: number[][];
@@ -25,6 +47,7 @@ export type PipelineStageMessage = {
   csp_traces: number[][];
   csp_channels: string[];
   features: number[];
+  predictions: ObserveHeadPrediction[];
   p_left: number | null;
   p_right: number | null;
   label: string | null;
@@ -43,6 +66,11 @@ export type StreamFrameMessage = {
   type: "stream_frame";
   channels: string[];
   sample_rate_hz: number;
+  t_start: number;
+  t_end: number;
+  imagery_onset: number | null;
+  markers: ObserveMarker[];
+  windows: ObserveWindowBand[];
   raw: number[][];
   filtered: number[][];
 };
@@ -75,6 +103,25 @@ export function parseObserveMessage(raw: unknown): ObserveMessage | null {
   const data = raw as Record<string, unknown>;
   const type = data.type;
   if (type === "stream_frame") {
+    const markers = Array.isArray(data.markers)
+      ? data.markers
+          .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+          .map((item) => ({
+            t: Number(item.t) || 0,
+            kind: String(item.kind ?? ""),
+            label: String(item.label ?? ""),
+            role: String(item.role ?? "other"),
+          }))
+      : [];
+    const windows = Array.isArray(data.windows)
+      ? data.windows
+          .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+          .map((item) => ({
+            index: Number(item.index) || 0,
+            start: Number(item.start) || 0,
+            end: Number(item.end) || 0,
+          }))
+      : [];
     return {
       version: Number(data.version) || 1,
       type: "stream_frame",
@@ -82,6 +129,12 @@ export function parseObserveMessage(raw: unknown): ObserveMessage | null {
         ? data.channels.map(String)
         : [],
       sample_rate_hz: Number(data.sample_rate_hz) || 0,
+      t_start: Number(data.t_start) || 0,
+      t_end: Number(data.t_end) || 0,
+      imagery_onset:
+        data.imagery_onset == null ? null : Number(data.imagery_onset),
+      markers,
+      windows,
       raw: asNumberGrid(data.raw),
       filtered: asNumberGrid(data.filtered),
     };
@@ -99,6 +152,8 @@ export function parseObserveMessage(raw: unknown): ObserveMessage | null {
       window_index: Number(data.window_index) || 0,
       window_start: Number(data.window_start) || 0,
       window_end: Number(data.window_end) || 0,
+      imagery_onset:
+        data.imagery_onset == null ? null : Number(data.imagery_onset),
       channels: Array.isArray(data.channels)
         ? data.channels.map(String)
         : [],
@@ -111,6 +166,20 @@ export function parseObserveMessage(raw: unknown): ObserveMessage | null {
         : [],
       features: Array.isArray(data.features)
         ? data.features.map((item) => Number(item) || 0)
+        : [],
+      predictions: Array.isArray(data.predictions)
+        ? data.predictions
+            .filter(
+              (item): item is Record<string, unknown> =>
+                !!item && typeof item === "object",
+            )
+            .map((item) => ({
+              classifier: String(item.classifier ?? ""),
+              label: item.label == null ? null : String(item.label),
+              score: item.score == null ? null : Number(item.score),
+              p_left: item.p_left == null ? null : Number(item.p_left),
+              p_right: item.p_right == null ? null : Number(item.p_right),
+            }))
         : [],
       p_left: data.p_left == null ? null : Number(data.p_left),
       p_right: data.p_right == null ? null : Number(data.p_right),

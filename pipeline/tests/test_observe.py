@@ -88,10 +88,25 @@ def test_stream_frame_message_shape() -> None:
         raw=raw,
         filtered=filtered,
         sample_rate_hz=250.0,
+        t_start=4.0,
+        t_end=6.0,
+        markers=[
+            {
+                "t": 5.0,
+                "kind": "trial_start",
+                "label": "left",
+                "role": "imagery_onset",
+            }
+        ],
+        windows=[{"index": 0, "start": 5.0, "end": 7.0}],
+        imagery_onset=5.0,
         max_points=40,
     )
     assert message["type"] == "stream_frame"
     assert message["sample_rate_hz"] == 250.0
+    assert message["t_start"] == 4.0
+    assert message["imagery_onset"] == 5.0
+    assert message["markers"][0]["role"] == "imagery_onset"
     assert message["channels"] == ["Cz", "C3", "C4", "Fz"]
     assert len(message["raw"]) == 4
     assert len(message["filtered"]) == 4

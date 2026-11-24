@@ -9,6 +9,7 @@ import {
   type PipelineStageMessage,
   type StreamFrameMessage,
 } from "@/lib/pipeline/observe";
+import { upsertStageHistory } from "@/lib/pipeline/stage-history";
 import { useSettingsStore } from "@/state/settings-store";
 
 export type SocketStatus = "connecting" | "open" | "closed" | "error";
@@ -44,6 +45,7 @@ export function useObserveSession() {
   const [observeUrl, setObserveUrl] = useState("ws://127.0.0.1:8091");
   const [socketStatus, setSocketStatus] = useState<SocketStatus>("connecting");
   const [stage, setStage] = useState<PipelineStageMessage | null>(null);
+  const [stages, setStages] = useState<PipelineStageMessage[]>([]);
   const [stream, setStream] = useState<StreamFrameMessage | null>(null);
   const [onlineMeta, setOnlineMeta] = useState<OnlineMeta>({});
 
@@ -77,6 +79,11 @@ export function useObserveSession() {
         }
         if (online.last_pipeline_stage) {
           setStage((prev) => prev ?? online.last_pipeline_stage ?? null);
+          setStages((prev) =>
+            prev.length
+              ? prev
+              : upsertStageHistory([], online.last_pipeline_stage!),
+          );
         }
         if (online.last_stream_frame) {
           setStream((prev) => prev ?? online.last_stream_frame ?? null);
@@ -98,13 +105,17 @@ export function useObserveSession() {
   useEffect(() => {
     const connection = connectObserveSocket(observeUrl, {
       onMessage: (message) => {
-        if (message.type === "pipeline_stage") setStage(message);
-        else setStream(message);
+        if (message.type === "pipeline_stage") {
+          setStage(message);
+          setStages((prev) => upsertStageHistory(prev, message));
+        } else {
+          setStream(message);
+        }
       },
       onStatus: setSocketStatus,
     });
     return () => connection.close();
   }, [observeUrl]);
 
-  return { observeUrl, socketStatus, stage, stream, onlineMeta };
+  return { observeUrl, socketStatus, stage, stages, stream, onlineMeta };
 }

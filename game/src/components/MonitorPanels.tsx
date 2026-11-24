@@ -1,6 +1,14 @@
 "use client";
 
-import type { PipelineStageMessage } from "@/lib/pipeline/observe";
+import type {
+  ObserveMarker,
+  ObserveWindowBand,
+  PipelineStageMessage,
+} from "@/lib/pipeline/observe";
+import {
+  formatRelativeSeconds,
+  secondsAfterOnset,
+} from "@/lib/pipeline/monitor-time";
 
 import { COMPACT_TRACE_LAYOUT, TraceCanvas } from "./charts/TraceCanvas";
 import styles from "./monitor-page.module.css";
@@ -10,11 +18,19 @@ export function TracePanel({
   detail,
   channels,
   samples,
+  timeRange = null,
+  markers = [],
+  windows = [],
+  imageryOnset = null,
 }: {
   title: string;
   detail: string;
   channels: string[];
   samples: number[][];
+  timeRange?: { start: number; end: number } | null;
+  markers?: ObserveMarker[];
+  windows?: ObserveWindowBand[];
+  imageryOnset?: number | null;
 }) {
   return (
     <figure className={styles.panel}>
@@ -27,33 +43,11 @@ export function TracePanel({
         samples={samples}
         label={title}
         layout={COMPACT_TRACE_LAYOUT}
+        timeRange={timeRange}
+        markers={markers}
+        windows={windows}
+        imageryOnset={imageryOnset}
       />
-    </figure>
-  );
-}
-
-export function FeatureBars({ features }: { features: number[] }) {
-  const peak = Math.max(1e-6, ...features.map((value) => Math.abs(value)));
-  return (
-    <figure className={styles.panel}>
-      <figcaption>
-        <span className={styles.title}>CSP log-var features</span>
-        <span className={styles.detail}>{features.length} dims</span>
-      </figcaption>
-      {features.length === 0 ? (
-        <p className={styles.empty}>Waiting for a classified window…</p>
-      ) : (
-        <div className={styles.bars} aria-label="Feature magnitudes">
-          {features.map((value, index) => (
-            <div
-              key={`f-${index}`}
-              className={styles.bar}
-              style={{ height: `${Math.max(4, (Math.abs(value) / peak) * 100)}%` }}
-              title={`f${index + 1}=${value.toFixed(3)}`}
-            />
-          ))}
-        </div>
-      )}
     </figure>
   );
 }
@@ -63,6 +57,100 @@ export function formatProb(value: number | null | undefined): string {
   return value.toFixed(3);
 }
 
+export function PipelineCascade({
+  hasStream,
+  hasStage,
+  stage,
+}: {
+  hasStream: boolean;
+  hasStage: boolean;
+  stage: PipelineStageMessage | null;
+}) {
+  const lag = secondsAfterOnset(stage?.window_end, stage?.imagery_onset);
+  const steps = [
+    { id: "1", label: "Raw", ready: hasStream },
+    { id: "2", label: "Filter", ready: hasStream },
+    { id: "3", label: "EA", ready: hasStage && (stage?.aligned?.length ?? 0) > 0 },
+    { id: "4", label: "CSP", ready: hasStage && (stage?.csp_traces?.length ?? 0) > 0 },
+    {
+      id: "5",
+      label: "Heads",
+      ready: hasStage && (stage?.predictions?.length ?? 0) > 0,
+    },
+  ];
+  return (
+    <figure className={`${styles.panel} ${styles.cascade}`}>
+      <figcaption>
+        <span className={styles.title}>Pipeline cascade</span>
+        <span className={styles.detail}>
+          EA/CSP/heads fill in as each 2 s window closes
+          {lag == null ? "" : ` · last window closed ${formatRelativeSeconds(lag)} after MI`}
+        </span>
+      </figcaption>
+      <ol className={styles.cascadeList}>
+        {steps.map((step, index) => (
+          <li
+            key={step.id}
+            className={step.ready ? styles.cascadeReady : styles.cascadeWait}
+          >
+            <span className={styles.cascadeStep}>{step.id}</span>
+            <span>{step.label}</span>
+            {index < steps.length - 1 ? (
+              <span className={styles.cascadeArrow} aria-hidden>
+                →
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </figure>
+  );
+}
+
+export function TimelineLegend({
+  markers,
+  windows,
+  imageryOnset,
+}: {
+  markers: ObserveMarker[];
+  windows: ObserveWindowBand[];
+  imageryOnset: number | null;
+}) {
+  const onset =
+    imageryOnset ??
+    markers.find((marker) => marker.role === "imagery_onset")?.t ??
+    null;
+  return (
+    <figure className={styles.panel}>
+      <figcaption>
+        <span className={styles.title}>Timeline</span>
+        <span className={styles.detail}>
+          Axis 0 = MI onset · windows: 0–2, 0.5–2.5, 1–3, 1.5–3.5, 2–4 s
+        </span>
+      </figcaption>
+      <div className={styles.controlRow}>
+        <span>
+          MI onset in view{" "}
+          <strong>
+            {onset == null ? "—" : formatRelativeSeconds(onset)}
+          </strong>
+        </span>
+        <span>
+          active windows <strong>{windows.length}</strong>
+        </span>
+        {markers
+          .filter((marker) => marker.role === "imagery_onset")
+          .slice(-2)
+          .map((marker) => (
+            <span key={`${marker.t}-${marker.label}`}>
+              {marker.kind}:{marker.label} @ {formatRelativeSeconds(marker.t)}
+            </span>
+          ))}
+      </div>
+    </figure>
+  );
+}
+
 export function DecisionPanel({
   stage,
   controlLabel,
@@ -70,8 +158,16 @@ export function DecisionPanel({
   stage: PipelineStageMessage | null;
   controlLabel: string;
 }) {
+  const windowLag = secondsAfterOnset(stage?.window_end, stage?.imagery_onset);
+  const windowRel =
+    stage && stage.imagery_onset != null
+      ? {
+          start: stage.window_start - stage.imagery_onset,
+          end: stage.window_end - stage.imagery_onset,
+        }
+      : null;
   return (
-    <figure className={styles.panel} style={{ marginTop: "0.85rem" }}>
+    <figure className={styles.panel}>
       <figcaption>
         <span className={styles.title}>Decision</span>
         <span className={styles.detail}>
@@ -99,6 +195,18 @@ export function DecisionPanel({
         </span>
         <span>
           control <strong>{controlLabel}</strong>
+        </span>
+        <span>
+          window vs MI{" "}
+          <strong>
+            {windowRel
+              ? `${formatRelativeSeconds(windowRel.start)} → ${formatRelativeSeconds(windowRel.end)}`
+              : "—"}
+          </strong>
+        </span>
+        <span>
+          closed after MI{" "}
+          <strong>{formatRelativeSeconds(windowLag)}</strong>
         </span>
         <span>
           gate{" "}

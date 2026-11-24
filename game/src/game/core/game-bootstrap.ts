@@ -16,6 +16,9 @@ export async function createCollectorGame(
     height: GAME_HEIGHT,
     backgroundColor: "#4a7a28",
     scene: [BootScene, OfflineScene, OnlineScene],
+    // Keep BCI trials moving while the monitor / another window has focus.
+    // Default Phaser pauseOnBlur freezes the avatar as soon as focus leaves.
+    pauseOnBlur: false,
     render: {
       antialias: true,
       antialiasGL: true,
